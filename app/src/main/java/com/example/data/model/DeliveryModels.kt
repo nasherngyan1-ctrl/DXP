@@ -8,9 +8,11 @@ import java.text.NumberFormat
 import java.util.Locale
 
 const val COMPANY_CODE_DXP = "DXP_POST"
+const val MAX_ADMINS_COUNT = 2
+const val MAX_DRIVERS_COUNT = 10
 
 enum class StaffRole(val code: String, val kurdishTitle: String) {
-    OWNER("OWNER", "ئۆنەر (بەڕێوەبەر)"),
+    OWNER("OWNER", "ئەدمین (ئۆنەر)"),
     DRIVER("DRIVER", "شۆفێر (مەندووب)");
 
     companion object {
@@ -43,7 +45,8 @@ data class StaffMember(
     val companyCode: String = COMPANY_CODE_DXP,
     val name: String = "",
     val phone: String = "",
-    val role: String = StaffRole.OWNER.code,
+    val email: String = "",
+    val role: String = StaffRole.DRIVER.code,
     val vehicleInfo: String = "",
     val active: Boolean = true,
     @ServerTimestamp val createdAt: Timestamp? = null,
@@ -70,6 +73,22 @@ data class DeliveryOrder(
     val assignedDriverId: String = "",
     val assignedDriverName: String = "",
     val isSettled: Boolean = false,
+    @ServerTimestamp val createdAt: Timestamp? = null,
+    @ServerTimestamp val updatedAt: Timestamp? = null
+)
+
+@IgnoreExtraProperties
+data class CashSettlement(
+    @DocumentId val id: String = "",
+    val ownerUid: String = "",
+    val companyCode: String = COMPANY_CODE_DXP,
+    val driverId: String = "",
+    val driverName: String = "",
+    val ordersCount: Long = 0L,
+    val itemPriceTotalIqd: Long = 0L,
+    val deliveryFeeTotalIqd: Long = 0L,
+    val totalSettledCashIqd: Long = 0L,
+    val notes: String = "",
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
 )

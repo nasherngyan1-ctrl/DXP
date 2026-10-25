@@ -143,7 +143,8 @@ fun DxpMainWorkspace(
                 DeliveryViewModel(
                     repository = DeliveryRepository(db),
                     currentUserId = currentUserId,
-                    currentUserDisplayName = currentUserDisplayName
+                    currentUserDisplayName = currentUserDisplayName,
+                    currentUserEmail = currentUserEmail
                 )
             }
         }
@@ -151,7 +152,9 @@ fun DxpMainWorkspace(
 
     val ordersState by viewModel.ordersState.collectAsStateWithLifecycle()
     val staffState by viewModel.staffState.collectAsStateWithLifecycle()
+    val settlementsState by viewModel.settlementsState.collectAsStateWithLifecycle()
     val activeRole by viewModel.activeViewRole.collectAsStateWithLifecycle()
+    val actualRole by viewModel.actualUserRole.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val selectedStatus by viewModel.selectedStatusFilter.collectAsStateWithLifecycle()
     val selectedDriverFilterId by viewModel.selectedDriverFilterId.collectAsStateWithLifecycle()
@@ -182,6 +185,7 @@ fun DxpMainWorkspace(
 
     val orders = (ordersState as? UiState.Success)?.data ?: emptyList()
     val staffList = (staffState as? UiState.Success)?.data ?: emptyList()
+    val settlements = (settlementsState as? UiState.Success)?.data ?: emptyList()
     val drivers = remember(staffList) {
         staffList.filter { it.role == StaffRole.DRIVER.code || staffList.size == 1 }
     }
@@ -197,6 +201,7 @@ fun DxpMainWorkspace(
             Column(modifier = Modifier.fillMaxWidth()) {
                 DxpTopHeader(
                     activeRole = activeRole,
+                    canSwitchRole = actualRole == StaffRole.OWNER,
                     onSwitchRole = { viewModel.switchActiveRole(it) },
                     userName = currentUserDisplayName
                 )
@@ -286,9 +291,17 @@ fun DxpMainWorkspace(
                     }
 
                     DxpTab.ACCOUNTING -> {
+                        val visibleDriverSummaries = remember(driverSummaries, activeRole, currentUserId) {
+                            if (activeRole == StaffRole.OWNER) {
+                                driverSummaries
+                            } else {
+                                driverSummaries.filter { it.driverId == currentUserId }
+                            }
+                        }
                         AccountingScreen(
                             kpis = kpis,
-                            driverSummaries = driverSummaries,
+                            driverSummaries = visibleDriverSummaries,
+                            settlements = settlements,
                             isOwnerView = activeRole == StaffRole.OWNER,
                             onSettleDriver = { summary ->
                                 viewModel.settleDriverOrders(summary)
@@ -301,6 +314,7 @@ fun DxpMainWorkspace(
                             staffList = staffList,
                             isOwnerView = activeRole == StaffRole.OWNER,
                             onAddDriverClick = { showAddStaffDialog = true },
+                            onSeedTeamClick = { viewModel.seedFullTeamRoster() },
                             onEditStaffMember = { member -> staffMemberToEdit = member }
                         )
                     }
@@ -311,6 +325,7 @@ fun DxpMainWorkspace(
                             currentUserEmail = currentUserEmail,
                             staffList = staffList,
                             activeRole = activeRole,
+                            canSwitchRole = actualRole == StaffRole.OWNER,
                             onSwitchRole = { viewModel.switchActiveRole(it) },
                             onEditOwnProfile = { member -> staffMemberToEdit = member },
                             onSignOutClick = {
@@ -385,17 +400,19 @@ fun DxpMainWorkspace(
         val existing = staffMemberToEdit
         AddOrEditStaffDialog(
             existingMember = existing,
+            isAdminEditor = actualRole == StaffRole.OWNER,
             onDismiss = {
                 showAddStaffDialog = false
                 staffMemberToEdit = null
             },
-            onSave = { name, phone, role, vehicleInfo, active ->
+            onSave = { name, phone, email, role, vehicleInfo, active ->
                 showAddStaffDialog = false
                 staffMemberToEdit = null
                 viewModel.saveStaffMember(
                     staffId = existing?.id ?: "",
                     name = name,
                     phone = phone,
+                    email = email,
                     role = role,
                     vehicleInfo = vehicleInfo,
                     active = active,

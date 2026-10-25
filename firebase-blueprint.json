@@ -2,12 +2,12 @@
   "entities": {
     "StaffMember": {
       "title": "StaffMember",
-      "description": "Represents an Owner or Delivery Driver (Mandoub) in DXP POST.",
+      "description": "Represents one of the 2 Admins (OWNER) or 10 Delivery Drivers (DRIVER) in DXP POST.",
       "type": "object",
       "properties": {
         "ownerUid": {
           "type": "string",
-          "description": "Firebase Auth UID of the creator/user."
+          "description": "Firebase Auth UID of the user or admin who created the profile."
         },
         "companyCode": {
           "type": "string",
@@ -16,16 +16,20 @@
         },
         "name": {
           "type": "string",
-          "description": "Full display name of the owner or driver."
+          "description": "Full display name of the admin or driver."
         },
         "phone": {
           "type": "string",
           "description": "Contact phone number."
         },
+        "email": {
+          "type": "string",
+          "description": "Google account email address of the admin or driver."
+        },
         "role": {
           "type": "string",
           "enum": ["OWNER", "DRIVER"],
-          "description": "Role within the delivery company."
+          "description": "Role within DXP POST: OWNER (Admin, max 2) or DRIVER (Delivery driver, max 10)."
         },
         "vehicleInfo": {
           "type": "string",
@@ -33,7 +37,7 @@
         },
         "active": {
           "type": "boolean",
-          "description": "Whether the staff member is currently active for deliveries."
+          "description": "Whether the staff member is currently active."
         },
         "createdAt": {
           "type": "string",
@@ -65,7 +69,7 @@
       "properties": {
         "ownerUid": {
           "type": "string",
-          "description": "Firebase Auth UID of the user who created the order."
+          "description": "Firebase Auth UID of the admin who created the order."
         },
         "companyCode": {
           "type": "string",
@@ -123,7 +127,7 @@
         },
         "assignedDriverId": {
           "type": "string",
-          "description": "Staff ID / UID of the assigned driver (empty if unassigned)."
+          "description": "Firebase Auth UID / Staff ID of the assigned driver (empty if unassigned)."
         },
         "assignedDriverName": {
           "type": "string",
@@ -131,7 +135,7 @@
         },
         "isSettled": {
           "type": "boolean",
-          "description": "Whether the cash collected for this order has been settled with the owner."
+          "description": "Whether the cash collected for this order has been settled with an admin."
         },
         "createdAt": {
           "type": "string",
@@ -165,16 +169,87 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "CashSettlement": {
+      "title": "CashSettlement",
+      "description": "Represents an accounting cash settlement receipt between a driver and an admin.",
+      "type": "object",
+      "properties": {
+        "ownerUid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the admin who recorded the settlement."
+        },
+        "companyCode": {
+          "type": "string",
+          "enum": ["DXP_POST"],
+          "description": "Company workspace identifier for DXP POST."
+        },
+        "driverId": {
+          "type": "string",
+          "description": "Staff ID / UID of the driver whose cash was settled."
+        },
+        "driverName": {
+          "type": "string",
+          "description": "Display name of the driver."
+        },
+        "ordersCount": {
+          "type": "integer",
+          "description": "Number of delivered orders settled in this transaction."
+        },
+        "itemPriceTotalIqd": {
+          "type": "integer",
+          "description": "Total merchant goods price settled in IQD."
+        },
+        "deliveryFeeTotalIqd": {
+          "type": "integer",
+          "description": "Total delivery fee settled in IQD."
+        },
+        "totalSettledCashIqd": {
+          "type": "integer",
+          "description": "Total cash handed over by the driver in IQD (itemPriceTotalIqd + deliveryFeeTotalIqd)."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Optional accounting settlement note."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when settled (FieldValue.serverTimestamp())."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when last updated (FieldValue.serverTimestamp())."
+        }
+      },
+      "required": [
+        "ownerUid",
+        "companyCode",
+        "driverId",
+        "driverName",
+        "ordersCount",
+        "itemPriceTotalIqd",
+        "deliveryFeeTotalIqd",
+        "totalSettledCashIqd",
+        "notes",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
     "/staff/{staffId}": {
       "schema": "StaffMember",
-      "description": "Collection of DXP POST owners and delivery drivers."
+      "description": "Collection of DXP POST staff members (2 admins and 10 delivery drivers)."
     },
     "/orders/{orderId}": {
       "schema": "DeliveryOrder",
       "description": "Collection of DXP POST delivery orders synchronized in real time."
+    },
+    "/settlements/{settlementId}": {
+      "schema": "CashSettlement",
+      "description": "Collection of DXP POST cash and accounting settlement records."
     }
   }
 }

@@ -3,18 +3,24 @@ package com.example.ui.viewmodel
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.data.model.CashSettlement
 import com.example.data.model.CompanyFinancialKpis
 import com.example.data.model.DeliveryOrder
 import com.example.data.model.DriverFinancialSummary
+import com.example.data.model.MAX_ADMINS_COUNT
+import com.example.data.model.MAX_DRIVERS_COUNT
 import com.example.data.model.OrderStatus
 import com.example.data.model.StaffMember
 import com.example.data.model.StaffRole
 import com.example.data.repository.DeliveryRepository
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -25,13 +31,38 @@ sealed interface UiState<out T> {
     data class Error(val message: String) : UiState<Nothing>
 }
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class DeliveryViewModel(
     private val repository: DeliveryRepository,
     val currentUserId: String,
-    val currentUserDisplayName: String
+    val currentUserDisplayName: String,
+    val currentUserEmail: String = ""
 ) : ViewModel() {
 
-    val ordersState: StateFlow<UiState<List<DeliveryOrder>>> = repository.observeCompanyOrders()
+    private val initialRole = if (repository.isKnownAdminEmail(currentUserEmail)) {
+        StaffRole.OWNER
+    } else {
+        StaffRole.DRIVER
+    }
+
+    private val _actualUserRole = MutableStateFlow(initialRole)
+    val actualUserRole: StateFlow<StaffRole> = _actualUserRole.asStateFlow()
+
+    private val _activeViewRole = MutableStateFlow(initialRole)
+    val activeViewRole: StateFlow<StaffRole> = _activeViewRole.asStateFlow()
+
+    private val _isProfileReady = MutableStateFlow(false)
+
+    val ordersState: StateFlow<UiState<List<DeliveryOrder>>> = _isProfileReady
+        .filter { it }
+        .flatMapLatest { _actualUserRole }
+        .flatMapLatest { role ->
+            if (role == StaffRole.OWNER) {
+                repository.observeCompanyOrders()
+            } else {
+                repository.observeDriverOrders(currentUserId)
+            }
+        }
         .map<List<DeliveryOrder>, UiState<List<DeliveryOrder>>> { UiState.Success(it) }
         .catch { error ->
             Log.w(TAG, "Error observing orders", error)
@@ -43,12 +74,43 @@ class DeliveryViewModel(
             initialValue = UiState.Loading
         )
 
-    val staffState: StateFlow<UiState<List<StaffMember>>> = repository.observeCompanyStaff()
+    val settlementsState: StateFlow<UiState<List<CashSettlement>>> = _isProfileReady
+        .filter { it }
+        .flatMapLatest { _actualUserRole }
+        .flatMapLatest { role ->
+            if (role == StaffRole.OWNER) {
+                repository.observeCompanySettlements()
+            } else {
+                repository.observeDriverSettlements(currentUserId)
+            }
+        }
+        .map<List<CashSettlement>, UiState<List<CashSettlement>>> { UiState.Success(it) }
+        .catch { error ->
+            Log.w(TAG, "Error observing settlements", error)
+            emit(UiState.Error(error.localizedMessage ?: "هەڵە لە هێنانی تۆماری حیسابات"))
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = UiState.Loading
+        )
+
+    val staffState: StateFlow<UiState<List<StaffMember>>> = _isProfileReady
+        .filter { it }
+        .flatMapLatest {
+            repository.observeCompanyStaff()
+        }
         .map<List<StaffMember>, UiState<List<StaffMember>>> { staffList ->
             val currentMember = staffList.firstOrNull { it.id == currentUserId }
-            if (currentMember != null && !_hasInitializedRoleFromProfile) {
-                _hasInitializedRoleFromProfile = true
-                _activeViewRole.value = StaffRole.fromCode(currentMember.role)
+            if (currentMember != null) {
+                val resolvedRole = StaffRole.fromCode(currentMember.role)
+                if (_actualUserRole.value != resolvedRole) {
+                    _actualUserRole.value = resolvedRole
+                    _activeViewRole.value = resolvedRole
+                } else if (!_hasInitializedRoleFromProfile) {
+                    _hasInitializedRoleFromProfile = true
+                    _activeViewRole.value = resolvedRole
+                }
             }
             UiState.Success(staffList)
         }
@@ -64,9 +126,6 @@ class DeliveryViewModel(
 
     private var _hasInitializedRoleFromProfile = false
 
-    private val _activeViewRole = MutableStateFlow(StaffRole.OWNER)
-    val activeViewRole: StateFlow<StaffRole> = _activeViewRole.asStateFlow()
-
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
@@ -81,10 +140,16 @@ class DeliveryViewModel(
 
     init {
         viewModelScope.launch {
-            repository.ensureCurrentUserProfile(
-                defaultName = currentUserDisplayName.ifBlank { "بەڕێوەبەری DXP POST" },
-                preferredRole = StaffRole.OWNER.code
+            val profileResult = repository.ensureCurrentUserProfile(
+                defaultName = currentUserDisplayName.ifBlank { "بەکارهێنەری DXP POST" },
+                defaultEmail = currentUserEmail
             )
+            profileResult.onSuccess { member ->
+                val resolved = StaffRole.fromCode(member.role)
+                _actualUserRole.value = resolved
+                _activeViewRole.value = resolved
+            }
+            _isProfileReady.value = true
         }
     }
 
@@ -105,7 +170,12 @@ class DeliveryViewModel(
     }
 
     fun switchActiveRole(role: StaffRole) {
-        _activeViewRole.value = role
+        // Only Admins (OWNER) can switch between Owner and Driver preview modes
+        if (_actualUserRole.value == StaffRole.OWNER) {
+            _activeViewRole.value = role
+        } else {
+            _activeViewRole.value = StaffRole.DRIVER
+        }
     }
 
     fun createNewOrder(
@@ -239,16 +309,36 @@ class DeliveryViewModel(
         staffId: String = "",
         name: String,
         phone: String,
+        email: String = "",
         role: StaffRole,
         vehicleInfo: String,
         active: Boolean = true,
-        existingMember: StaffMember? = null
+        existingMember: StaffMember? = null,
+        currentStaffList: List<StaffMember> = emptyList()
     ) {
         viewModelScope.launch {
+            if (existingMember == null || existingMember.role != role.code) {
+                val currentAdminsCount = currentStaffList.count {
+                    it.role == StaffRole.OWNER.code && it.id != existingMember?.id
+                }
+                val currentDriversCount = currentStaffList.count {
+                    it.role == StaffRole.DRIVER.code && it.id != existingMember?.id
+                }
+                if (role == StaffRole.OWNER && currentAdminsCount >= MAX_ADMINS_COUNT) {
+                    _actionMessage.value = "تەنها $MAX_ADMINS_COUNT ئەدمین ڕێگەپێدراوە لە سیستەمەکەدا"
+                    return@launch
+                }
+                if (role == StaffRole.DRIVER && currentDriversCount >= MAX_DRIVERS_COUNT) {
+                    _actionMessage.value = "تەنها $MAX_DRIVERS_COUNT شۆفێر ڕێگەپێدراوە لە سیستەمەکەدا"
+                    return@launch
+                }
+            }
+
             val result = repository.createOrUpdateStaffMember(
                 staffId = staffId,
                 name = name,
                 phone = phone,
+                email = email,
                 role = role.code,
                 vehicleInfo = vehicleInfo,
                 active = active,
@@ -256,6 +346,7 @@ class DeliveryViewModel(
             )
             result.onSuccess {
                 if (resolvedIsSelf(staffId, existingMember)) {
+                    _actualUserRole.value = role
                     _activeViewRole.value = role
                 }
                 _actionMessage.value = "زانیاری بەکارهێنەر/شۆفێر پاشەکەوت کرا"
@@ -271,36 +362,34 @@ class DeliveryViewModel(
 
     fun settleDriverOrders(summary: DriverFinancialSummary) {
         viewModelScope.launch {
-            val result = repository.settleDriverOrders(summary.unsettledOrders)
+            val result = repository.settleDriverOrders(
+                driverId = summary.driverId,
+                driverName = summary.driverName,
+                unsettledOrders = summary.unsettledOrders
+            )
             result.onSuccess { count ->
                 _actionMessage.value =
-                    "حیسابی شۆفێر (${summary.driverName}) بۆ $count وەسڵ پاکتاو کرا"
+                    "حیسابی شۆفێر (${summary.driverName}) بۆ $count وەسڵ پاکتاو کرا و لە حیسابات تۆمارکرا"
             }.onFailure { err ->
                 _actionMessage.value = "هەڵە لە پاکتاوکردن: ${err.localizedMessage}"
             }
         }
     }
 
+    fun seedFullTeamRoster() {
+        viewModelScope.launch {
+            val res = repository.seedTwoAdminsAndTenDrivers()
+            res.onSuccess {
+                _actionMessage.value = "لیستی تەواوی ٢ ئەدمین و ١٠ شۆفێری DXP POST ئامادە کرا"
+            }.onFailure { err ->
+                _actionMessage.value = "هەڵە لە ئامادەکردنی ستاف: ${err.localizedMessage}"
+            }
+        }
+    }
+
     fun seedSampleDxpData() {
         viewModelScope.launch {
-            val drv1Result = repository.createOrUpdateStaffMember(
-                staffId = "drv_soran_dxp",
-                name = "سۆران محەمەد (مەندووب)",
-                phone = "07504455667",
-                role = StaffRole.DRIVER.code,
-                vehicleInfo = "ماتۆڕ - هەولێر ناوشار",
-                active = true
-            )
-            val drv2Result = repository.createOrUpdateStaffMember(
-                staffId = "drv_aram_dxp",
-                name = "ئارام کەریم (مەندووب)",
-                phone = "07708899001",
-                role = StaffRole.DRIVER.code,
-                vehicleInfo = "ئۆتۆمبێل - سلێمانی و دەوروبەر",
-                active = true
-            )
-            val d1Id = drv1Result.getOrDefault("drv_soran_dxp")
-            val d2Id = drv2Result.getOrDefault("drv_aram_dxp")
+            repository.seedTwoAdminsAndTenDrivers()
 
             repository.createOrder(
                 trackingCode = "DXP-1081",
@@ -312,8 +401,8 @@ class DeliveryViewModel(
                 notes = "پێش گەیشتن پەیوەندی پێوە بکە",
                 itemPriceIqd = 45000L,
                 deliveryFeeIqd = 4000L,
-                assignedDriverId = d1Id,
-                assignedDriverName = "سۆران محەمەد (مەندووب)"
+                assignedDriverId = "drv_dxp_01",
+                assignedDriverName = "مەندووب ١ - سۆران محەمەد"
             )
 
             repository.createOrder(
@@ -326,11 +415,11 @@ class DeliveryViewModel(
                 notes = "پاکێجەکە ناسکە و شکانی تێدایە",
                 itemPriceIqd = 120000L,
                 deliveryFeeIqd = 5000L,
-                assignedDriverId = d2Id,
-                assignedDriverName = "ئارام کەریم (مەندووب)"
+                assignedDriverId = "drv_dxp_02",
+                assignedDriverName = "مەندووب ٢ - ئارام کەریم"
             )
 
-            _actionMessage.value = "نموونەی شۆفێر و وەسڵەکانی DXP POST زیادکران"
+            _actionMessage.value = "٢ ئەدمین، ١٠ شۆفێر و نموونەی وەسڵەکانی DXP POST زیادکران"
         }
     }
 
@@ -367,7 +456,6 @@ class DeliveryViewModel(
         orders: List<DeliveryOrder>
     ): List<DriverFinancialSummary> {
         val driversById = staffList.associateBy { it.id }.toMutableMap()
-        // Also include any driver IDs referenced on orders that may not be in staffList yet
         orders.forEach { order ->
             if (order.assignedDriverId.isNotBlank() && !driversById.containsKey(order.assignedDriverId)) {
                 driversById[order.assignedDriverId] = StaffMember(

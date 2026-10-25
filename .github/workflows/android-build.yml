@@ -25,24 +25,19 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: Prepare Keystore, Firebase Config & Environment Files
+      - name: Prepare Registered Firebase Keystore, Google Services & Environment
         run: |
-          # 1. Restore debug.keystore from debug.keystore.base64 so Google Sign-In & Firebase match SHA-1
-          if [ -f debug.keystore.base64 ]; then
+          # 1. Restore the exact Firebase-registered debug.keystore (SHA-1: BC:D4:66:58:6A:E6:21:E8:30:B6:87:0A:74:2A:3C:00:7F:24:A4:EA)
+          # Never generate a random keystore, because Google Sign-In requires the exact registered SHA-1 fingerprint.
+          if [ -f .github/signing-key.b64 ]; then
+            base64 -d .github/signing-key.b64 > debug.keystore
+            echo "Restored debug.keystore from .github/signing-key.b64"
+          elif [ -f debug.keystore.base64 ]; then
             base64 -d debug.keystore.base64 > debug.keystore
             echo "Restored debug.keystore from debug.keystore.base64"
-          elif [ ! -f debug.keystore ]; then
-            keytool -genkeypair -v \
-              -keystore debug.keystore \
-              -alias androiddebugkey \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000 \
-              -storepass android \
-              -keypass android \
-              -dname "CN=Android Debug,O=Android,C=US"
           fi
           cp debug.keystore my-upload-key.jks
+          keytool -list -v -keystore debug.keystore -alias androiddebugkey -storepass android -keypass android | grep -E "SHA1|SHA256"
 
           # 2. Restore app/google-services.json if excluded during GitHub export
           if [ ! -f app/google-services.json ] && [ -f .github/google-services.b64 ]; then
@@ -169,8 +164,8 @@ jobs:
               applicationId = "com.aistudio.dxppost.kxrqzp"
               minSdk = 24
               targetSdk = 35
-              versionCode = 1
-              versionName = "1.0"
+              versionCode = 2
+              versionName = "1.1"
               testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
             }
 
@@ -287,12 +282,12 @@ jobs:
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.${{ github.run_number }}
-          name: "DXP POST v1.0.${{ github.run_number }} (ئەپی پۆست و گەیاندن)"
+          tag_name: v1.1.${{ github.run_number }}
+          name: "DXP POST v1.1.${{ github.run_number }} (ئەپی پۆست و گەیاندن)"
           body: |
             ### ئەپی فەرمی DXP POST
             - فایلی **`DXP-POST.apk`** لە خوارەوە دابەزێنە و لەسەر مۆبایلەکەت دایبمەزرێنە.
-            - بەستراوەتەوە بە بنکەی دراوەی ڕاستەوخۆ (Cloud Firestore) و چوونەژوورەوەی گووگڵ.
+            - تکایە پێش دامەزراندنی ئەم وەشانە، ئەگەر وەشانی پێشووت لەسەر مۆبایلەکەت هەیە بیسڕەوە (Uninstall) بۆ ئەوەی کلیلی چوونەژوورەوەی گووگڵ (SHA-1) بە دروستی کار بکات.
           files: dist/DXP-POST.apk
           draft: false
           prerelease: false

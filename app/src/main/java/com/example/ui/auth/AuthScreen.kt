@@ -2,6 +2,9 @@ package com.example.ui.auth
 
 import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
+import android.content.Intent
+import android.provider.Settings
 import android.util.Log
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -26,6 +29,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.LocalShipping
+import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material3.Button
@@ -35,6 +39,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -61,7 +66,9 @@ import androidx.credentials.ClearCredentialStateRequest
 import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
+import androidx.credentials.GetCredentialResponse
 import androidx.credentials.exceptions.GetCredentialCancellationException
+import androidx.credentials.exceptions.NoCredentialException
 import com.example.R
 import com.example.ui.theme.DxpAccentViolet
 import com.example.ui.theme.DxpDeepPurple
@@ -77,6 +84,28 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
+private suspend fun handleGoogleCredentialResult(
+    result: GetCredentialResponse,
+    onAuthSuccess: () -> Unit,
+    onAuthError: (String) -> Unit
+) {
+    val credential = result.credential
+    if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+        val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
+        val authCredential = GoogleAuthProvider.getCredential(googleIdToken, null)
+        Firebase.auth.signInWithCredential(authCredential).await()
+        onAuthSuccess()
+    } else {
+        onAuthError("جۆری هەژمارەکە نەناسرایەوە")
+    }
+}
+
 fun attemptAutoSignIn(
     context: Context,
     credentialManager: CredentialManager,
@@ -89,8 +118,12 @@ fun attemptAutoSignIn(
         return
     }
     val clientId = try {
-        context.getString(R.string.default_web_client_id)
+        context.getString(R.string.default_web_client_id).trim()
     } catch (e: Exception) {
+        onUnauthenticated()
+        return
+    }
+    if (clientId.isBlank()) {
         onUnauthenticated()
         return
     }
@@ -105,18 +138,16 @@ fun attemptAutoSignIn(
         .addCredentialOption(googleIdOption)
         .build()
 
+    val activityContext = context.findActivity() ?: context
+
     scope.launch {
         try {
-            val result = credentialManager.getCredential(context, request)
-            val credential = result.credential
-            if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
-                val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
-                val authCredential = GoogleAuthProvider.getCredential(googleIdToken, null)
-                Firebase.auth.signInWithCredential(authCredential).await()
-                onAuthSuccess()
-            } else {
-                onUnauthenticated()
-            }
+            val result = credentialManager.getCredential(activityContext, request)
+            handleGoogleCredentialResult(
+                result = result,
+                onAuthSuccess = onAuthSuccess,
+                onAuthError = { onUnauthenticated() }
+            )
         } catch (e: Exception) {
             onUnauthenticated()
         }
@@ -132,33 +163,61 @@ fun onGoogleSignInClicked(
     onAuthCancelled: () -> Unit = {}
 ) {
     val clientId = try {
-        context.getString(R.string.default_web_client_id)
+        context.getString(R.string.default_web_client_id).trim()
     } catch (e: Exception) {
         onAuthError("Google Sign-In configuration missing: default_web_client_id not found")
         return
     }
+    if (clientId.isBlank()) {
+        onAuthError("کلیلی Web Client ID لە ناو ئەپەکەدا نەدۆزرایەوە")
+        return
+    }
 
     val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
-    val request = GetCredentialRequest.Builder()
+    val primaryRequest = GetCredentialRequest.Builder()
         .addCredentialOption(signInOption)
         .build()
 
+    val activityContext = context.findActivity() ?: context
+
     scope.launch {
         try {
-            val activityContext = context as? Activity ?: context
-            val result = credentialManager.getCredential(activityContext, request)
-            val credential = result.credential
-            if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
-                val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
-                val authCredential = GoogleAuthProvider.getCredential(googleIdToken, null)
-                Firebase.auth.signInWithCredential(authCredential).await()
-                onAuthSuccess()
-            } else {
-                onAuthError("جۆری هەژمارەکە نەناسرایەوە")
-            }
+            val result = credentialManager.getCredential(activityContext, primaryRequest)
+            handleGoogleCredentialResult(
+                result = result,
+                onAuthSuccess = onAuthSuccess,
+                onAuthError = onAuthError
+            )
         } catch (e: GetCredentialCancellationException) {
             Log.w("Auth", "Google Sign-In cancelled or dismissed: ${e.message}", e)
             onAuthCancelled()
+        } catch (e: NoCredentialException) {
+            Log.w("Auth", "Primary GetSignInWithGoogleOption returned NoCredentialException, trying unfiltered GoogleIdOption", e)
+            try {
+                val fallbackGoogleIdOption = GetGoogleIdOption.Builder()
+                    .setFilterByAuthorizedAccounts(false)
+                    .setServerClientId(clientId)
+                    .setAutoSelectEnabled(false)
+                    .build()
+                val fallbackRequest = GetCredentialRequest.Builder()
+                    .addCredentialOption(fallbackGoogleIdOption)
+                    .build()
+                val fallbackResult = credentialManager.getCredential(activityContext, fallbackRequest)
+                handleGoogleCredentialResult(
+                    result = fallbackResult,
+                    onAuthSuccess = onAuthSuccess,
+                    onAuthError = onAuthError
+                )
+            } catch (cancelEx: GetCredentialCancellationException) {
+                Log.w("Auth", "Google Sign-In fallback cancelled or dismissed: ${cancelEx.message}", cancelEx)
+                onAuthCancelled()
+            } catch (noCredEx: NoCredentialException) {
+                Log.e("Auth", "No Google account found on device", noCredEx)
+                onAuthError("هیچ هەژمارێکی گووگڵ لەسەر ئەم ئامێرە چالاک نییە. تکایە سەرەتا لە ڕێکخستنەکانی ئامێرەکەت هەژماری گووگڵ زیاد بکە.")
+            } catch (fallbackEx: Exception) {
+                Log.e("Auth", "Google Sign-In fallback failed", fallbackEx)
+                onAuthError(fallbackEx.localizedMessage ?: "هەڵە لە کاتی چوونەژوورەوە ڕوویدا")
+            }
         } catch (e: Exception) {
             Log.e("Auth", "Google Sign-In failed", e)
             onAuthError(e.localizedMessage ?: "هەڵە لە کاتی چوونەژوورەوە ڕوویدا")
@@ -193,6 +252,7 @@ fun AuthScreen(
     val credentialManager = remember { CredentialManager.create(context) }
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var showAddGoogleAccountAction by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         attemptAutoSignIn(
@@ -293,25 +353,65 @@ fun AuthScreen(
 
             if (errorMessage != null) {
                 Surface(
-                    color = Color(0xFFEF4444).copy(alpha = 0.2f),
+                    color = Color(0xFFEF4444).copy(alpha = 0.22f),
                     shape = RoundedCornerShape(14.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(bottom = 16.dp)
+                        .padding(bottom = 14.dp)
                 ) {
-                    Text(
-                        text = errorMessage ?: "",
-                        color = Color(0xFFFCA5A5),
-                        style = MaterialTheme.typography.bodyMedium,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(12.dp)
-                    )
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.padding(14.dp)
+                    ) {
+                        Text(
+                            text = errorMessage ?: "",
+                            color = Color(0xFFFCA5A5),
+                            style = MaterialTheme.typography.bodyMedium,
+                            textAlign = TextAlign.Center
+                        )
+
+                        if (showAddGoogleAccountAction) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            OutlinedButton(
+                                onClick = {
+                                    try {
+                                        val intent = Intent(Settings.ACTION_ADD_ACCOUNT).apply {
+                                            putExtra(Settings.EXTRA_ACCOUNT_TYPES, arrayOf("com.google"))
+                                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        }
+                                        context.startActivity(intent)
+                                    } catch (e: Exception) {
+                                        try {
+                                            val fallbackIntent = Intent(Settings.ACTION_SYNC_SETTINGS).apply {
+                                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                            }
+                                            context.startActivity(fallbackIntent)
+                                        } catch (_: Exception) {
+                                        }
+                                    }
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                                modifier = Modifier.testTag("add_google_account_settings_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.PersonAdd,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("کردنەوەی ڕێکخستنی هەژماری گووگڵ")
+                            }
+                        }
+                    }
                 }
             }
 
             Button(
                 onClick = {
                     errorMessage = null
+                    showAddGoogleAccountAction = false
                     isLoading = true
                     onGoogleSignInClicked(
                         context = context,
@@ -323,10 +423,13 @@ fun AuthScreen(
                         onAuthError = { msg ->
                             isLoading = false
                             errorMessage = msg
+                            showAddGoogleAccountAction = true
                         },
                         scope = scope,
                         onAuthCancelled = {
                             isLoading = false
+                            errorMessage = "پەنجەرەی چوونەژوورەوەی گووگڵ داخرایەوە. تکایە دڵنیابە لەوەی هەژماری گووگڵ لەسەر مۆبایلەکەت چالاکە و وەشانی نوێی ئەپەکەت دامەزراندووە."
+                            showAddGoogleAccountAction = true
                         }
                     )
                 },

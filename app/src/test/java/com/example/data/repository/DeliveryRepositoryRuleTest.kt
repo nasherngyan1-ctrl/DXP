@@ -14,7 +14,7 @@ import org.junit.Test
 class DeliveryRepositoryRuleTest : FirestoreEmulatorTestBase() {
 
     @Test
-    fun createOrder_and_observeCompanyOrders_emitsRealtimeOrder() = runBlocking {
+    fun admin_createOrder_and_observeCompanyOrders_emitsRealtimeOrder() = runBlocking {
         signInTestUser("owner@dxppost.com")
         val repository = DeliveryRepository(firestore, auth)
 
@@ -43,7 +43,7 @@ class DeliveryRepositoryRuleTest : FirestoreEmulatorTestBase() {
     }
 
     @Test
-    fun assignedDriver_canUpdateOrderStatusToDelivered() = runBlocking {
+    fun assignedDriver_canObserveAssignedOrders_and_updateStatusToDelivered() = runBlocking {
         val driverUid = signInTestUser("driver1@dxppost.com")
         signInTestUser("owner2@dxppost.com")
         val ownerRepo = DeliveryRepository(firestore, auth)
@@ -67,6 +67,12 @@ class DeliveryRepositoryRuleTest : FirestoreEmulatorTestBase() {
         // Switch to assigned driver
         signInTestUser("driver1@dxppost.com")
         val driverRepo = DeliveryRepository(firestore, auth)
+
+        val driverOrders = withTimeout(FLOW_TIMEOUT_MS) {
+            driverRepo.observeDriverOrders(driverUid).first { list -> list.any { it.id == orderId } }
+        }
+        assertTrue(driverOrders.any { it.id == orderId })
+
         val updateResult = withTimeout(DEFAULT_TIMEOUT_MS) {
             driverRepo.updateOrderStatus(orderId, OrderStatus.DELIVERED)
         }
@@ -76,6 +82,78 @@ class DeliveryRepositoryRuleTest : FirestoreEmulatorTestBase() {
             driverRepo.getOrderById(orderId).getOrThrow()
         }
         assertEquals(OrderStatus.DELIVERED.code, fetched.status)
+    }
+
+    @Test
+    fun driver_cannotCreateOrder_or_settleAccounting_failsWithPermissionDenied() = runBlocking {
+        val driverUid = signInTestUser("driver3@dxppost.com")
+        val driverRepo = DeliveryRepository(firestore, auth)
+
+        val createAttempt = withTimeout(DEFAULT_TIMEOUT_MS) {
+            driverRepo.createOrder(
+                trackingCode = "DXP-HACK",
+                senderName = "Test",
+                customerName = "Customer",
+                customerPhone = "07501112233",
+                cityArea = "Erbil",
+                addressDetails = "Center",
+                notes = "",
+                itemPriceIqd = 10000L,
+                deliveryFeeIqd = 3000L,
+                assignedDriverId = driverUid,
+                assignedDriverName = "Driver"
+            )
+        }
+        assertTrue(createAttempt.isFailure)
+        val createEx = createAttempt.exceptionOrNull()?.unwrapFirestoreException()
+        assertNotNull(createEx)
+        assertEquals(FirebaseFirestoreException.Code.PERMISSION_DENIED, createEx?.code)
+    }
+
+    @Test
+    fun admin_settleDriverOrders_marksOrdersSettled_and_createsSettlementRecord() = runBlocking {
+        val driverUid = signInTestUser("driver4@dxppost.com")
+        signInTestUser("admin1@dxppost.com")
+        val adminRepo = DeliveryRepository(firestore, auth)
+
+        val orderId = withTimeout(DEFAULT_TIMEOUT_MS) {
+            adminRepo.createOrder(
+                trackingCode = "DXP-5004",
+                senderName = "فرۆشگای دهۆک",
+                customerName = "ژیار",
+                customerPhone = "07503334455",
+                cityArea = "دهۆک",
+                addressDetails = "سەنتەر",
+                notes = "",
+                itemPriceIqd = 45000L,
+                deliveryFeeIqd = 5000L,
+                assignedDriverId = driverUid,
+                assignedDriverName = "شۆفێر ٤"
+            ).getOrThrow()
+        }
+
+        withTimeout(DEFAULT_TIMEOUT_MS) {
+            adminRepo.updateOrderStatus(orderId, OrderStatus.DELIVERED).getOrThrow()
+        }
+        val deliveredOrder = withTimeout(DEFAULT_TIMEOUT_MS) {
+            adminRepo.getOrderById(orderId).getOrThrow()
+        }
+
+        val settleResult = withTimeout(DEFAULT_TIMEOUT_MS) {
+            adminRepo.settleDriverOrders(
+                driverId = driverUid,
+                driverName = "شۆفێر ٤",
+                unsettledOrders = listOf(deliveredOrder)
+            )
+        }
+        assertTrue("settleDriverOrders failed: ${settleResult.exceptionOrNull()}", settleResult.isSuccess)
+        assertEquals(1, settleResult.getOrThrow())
+
+        val settlements = withTimeout(FLOW_TIMEOUT_MS) {
+            adminRepo.observeCompanySettlements().first { list -> list.any { it.driverId == driverUid } }
+        }
+        val settlement = settlements.first { it.driverId == driverUid }
+        assertEquals(50000L, settlement.totalSettledCashIqd)
     }
 
     @Test

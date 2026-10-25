@@ -3,6 +3,7 @@ package com.example.data.repository
 import android.content.Context
 import com.example.R
 import com.example.data.model.COMPANY_CODE_DXP
+import com.example.data.model.CashSettlement
 import com.example.data.model.DeliveryOrder
 import com.example.data.model.OrderStatus
 import com.example.data.model.StaffMember
@@ -37,10 +38,36 @@ class DeliveryRepository(
             ?: throw IllegalStateException("پێویستە سەرەتا بە هەژماری گووگڵ بچیتە ژوورەوە")
     }
 
+    fun isKnownAdminEmail(email: String?): Boolean {
+        val clean = email?.trim()?.lowercase() ?: return false
+        return clean in BOOTSTRAPPED_ADMIN_EMAILS
+    }
+
+    // Admin real-time stream: all company orders
     fun observeCompanyOrders(): Flow<List<DeliveryOrder>> {
         val path = "orders"
         return db.collection(path)
             .whereEqualTo("companyCode", COMPANY_CODE_DXP)
+            .snapshots()
+            .map { snapshot ->
+                snapshot.toObjects(
+                    DeliveryOrder::class.java,
+                    DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
+                ).sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
+            }
+            .catch { error ->
+                if (error is Exception) {
+                    handleFirestoreError(error, OperationType.LIST, path)
+                }
+                throw error
+            }
+    }
+
+    // Driver real-time stream: only orders assigned to this driver
+    fun observeDriverOrders(driverId: String): Flow<List<DeliveryOrder>> {
+        val path = "orders"
+        return db.collection(path)
+            .whereEqualTo("assignedDriverId", driverId)
             .snapshots()
             .map { snapshot ->
                 snapshot.toObjects(
@@ -65,7 +92,50 @@ class DeliveryRepository(
                 snapshot.toObjects(
                     StaffMember::class.java,
                     DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-                ).sortedBy { it.name }
+                ).sortedWith(
+                    compareBy<StaffMember> { it.role != StaffRole.OWNER.code }
+                        .thenBy { it.name }
+                )
+            }
+            .catch { error ->
+                if (error is Exception) {
+                    handleFirestoreError(error, OperationType.LIST, path)
+                }
+                throw error
+            }
+    }
+
+    // Admin real-time stream: all cash settlement records
+    fun observeCompanySettlements(): Flow<List<CashSettlement>> {
+        val path = "settlements"
+        return db.collection(path)
+            .whereEqualTo("companyCode", COMPANY_CODE_DXP)
+            .snapshots()
+            .map { snapshot ->
+                snapshot.toObjects(
+                    CashSettlement::class.java,
+                    DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
+                ).sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
+            }
+            .catch { error ->
+                if (error is Exception) {
+                    handleFirestoreError(error, OperationType.LIST, path)
+                }
+                throw error
+            }
+    }
+
+    // Driver real-time stream: only cash settlements for this driver
+    fun observeDriverSettlements(driverId: String): Flow<List<CashSettlement>> {
+        val path = "settlements"
+        return db.collection(path)
+            .whereEqualTo("driverId", driverId)
+            .snapshots()
+            .map { snapshot ->
+                snapshot.toObjects(
+                    CashSettlement::class.java,
+                    DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
+                ).sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
             }
             .catch { error ->
                 if (error is Exception) {
@@ -93,10 +163,12 @@ class DeliveryRepository(
 
     suspend fun ensureCurrentUserProfile(
         defaultName: String,
+        defaultEmail: String = "",
         defaultPhone: String = "",
-        preferredRole: String = StaffRole.OWNER.code
+        preferredRole: String? = null
     ): Result<StaffMember> = runCatching {
         val uid = requireUserId()
+        val userEmail = defaultEmail.ifBlank { auth.currentUser?.email ?: "" }.trim()
         val docRef = db.collection("staff").document(uid)
         try {
             val existingSnap = docRef.get().await()
@@ -107,14 +179,49 @@ class DeliveryRepository(
                 )
                 if (member != null) return@runCatching member
             }
-            val safeName = defaultName.trim().ifBlank { "بەکارهێنەری DXP" }.take(80)
+
+            // Check if an Admin pre-registered this user by email in /staff
+            var matchedPreRegistered: StaffMember? = null
+            if (userEmail.isNotBlank()) {
+                val staffQuery = db.collection("staff")
+                    .whereEqualTo("companyCode", COMPANY_CODE_DXP)
+                    .get()
+                    .await()
+                matchedPreRegistered = staffQuery.toObjects(
+                    StaffMember::class.java,
+                    DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
+                ).firstOrNull {
+                    it.id != uid && it.email.equals(userEmail, ignoreCase = true)
+                }
+            }
+
+            val resolvedRole = when {
+                preferredRole != null -> preferredRole
+                isKnownAdminEmail(userEmail) -> StaffRole.OWNER.code
+                else -> StaffRole.DRIVER.code
+            }
+
+            val safeName = (matchedPreRegistered?.name?.ifBlank { null } ?: defaultName)
+                .trim()
+                .ifBlank {
+                    if (resolvedRole == StaffRole.OWNER.code) "ئەدمینی DXP POST" else "مەندووبی DXP POST"
+                }
+                .take(80)
+            val safePhone = (matchedPreRegistered?.phone?.ifBlank { null } ?: defaultPhone)
+                .trim()
+                .take(30)
+            val safeVehicle = (matchedPreRegistered?.vehicleInfo?.ifBlank { null } ?: "گەیاندنی گشتی")
+                .trim()
+                .take(80)
+
             val payload = mapOf(
                 "ownerUid" to uid,
                 "companyCode" to COMPANY_CODE_DXP,
                 "name" to safeName,
-                "phone" to defaultPhone.trim().take(30),
-                "role" to preferredRole,
-                "vehicleInfo" to "گەیاندنی گشتی",
+                "phone" to safePhone,
+                "email" to userEmail.take(120),
+                "role" to resolvedRole,
+                "vehicleInfo" to safeVehicle,
                 "active" to true,
                 "createdAt" to FieldValue.serverTimestamp(),
                 "updatedAt" to FieldValue.serverTimestamp()
@@ -125,9 +232,10 @@ class DeliveryRepository(
                 ownerUid = uid,
                 companyCode = COMPANY_CODE_DXP,
                 name = safeName,
-                phone = defaultPhone.trim().take(30),
-                role = preferredRole,
-                vehicleInfo = "گەیاندنی گشتی",
+                phone = safePhone,
+                email = userEmail.take(120),
+                role = resolvedRole,
+                vehicleInfo = safeVehicle,
                 active = true
             )
         } catch (e: CancellationException) {
@@ -142,6 +250,7 @@ class DeliveryRepository(
         staffId: String = "",
         name: String,
         phone: String,
+        email: String = "",
         role: String,
         vehicleInfo: String,
         active: Boolean = true,
@@ -149,7 +258,7 @@ class DeliveryRepository(
     ): Result<String> = runCatching {
         val uid = requireUserId()
         val resolvedId = staffId.ifBlank {
-            existingMember?.id?.ifBlank { null } ?: "drv_${UUID.randomUUID().toString().take(8)}"
+            existingMember?.id?.ifBlank { null } ?: "drv_${UUID.randomUUID().toString().replace("-", "").take(8)}"
         }
         val docRef = db.collection("staff").document(resolvedId)
         try {
@@ -159,6 +268,7 @@ class DeliveryRepository(
                     "companyCode" to COMPANY_CODE_DXP,
                     "name" to name.trim().ifBlank { "شۆفێری DXP" }.take(80),
                     "phone" to phone.trim().take(30),
+                    "email" to email.trim().take(120),
                     "role" to role,
                     "vehicleInfo" to vehicleInfo.trim().take(80),
                     "active" to active,
@@ -170,6 +280,7 @@ class DeliveryRepository(
                 val updates = mapOf(
                     "name" to name.trim().ifBlank { existingMember.name }.take(80),
                     "phone" to phone.trim().take(30),
+                    "email" to email.trim().take(120),
                     "role" to role,
                     "vehicleInfo" to vehicleInfo.trim().take(80),
                     "active" to active,
@@ -350,8 +461,13 @@ class DeliveryRepository(
         }
     }
 
-    suspend fun settleDriverOrders(unsettledOrders: List<DeliveryOrder>): Result<Int> = runCatching {
-        requireUserId()
+    suspend fun settleDriverOrders(
+        driverId: String,
+        driverName: String,
+        unsettledOrders: List<DeliveryOrder>,
+        notes: String = "پاکتاوی حیسابی شۆفێر"
+    ): Result<Int> = runCatching {
+        val uid = requireUserId()
         if (unsettledOrders.isEmpty()) return@runCatching 0
         val batch = db.batch()
         for (order in unsettledOrders) {
@@ -366,13 +482,103 @@ class DeliveryRepository(
                 )
             }
         }
+
+        val itemPriceTotal = unsettledOrders.sumOf { it.itemPriceIqd.coerceAtLeast(0L) }
+        val deliveryFeeTotal = unsettledOrders.sumOf { it.deliveryFeeIqd.coerceAtLeast(0L) }
+        val totalSettled = itemPriceTotal + deliveryFeeTotal
+        val settlementId = "stl_${UUID.randomUUID().toString().replace("-", "").take(12)}"
+        val settlementRef = db.collection("settlements").document(settlementId)
+        val settlementPayload = mapOf(
+            "ownerUid" to uid,
+            "companyCode" to COMPANY_CODE_DXP,
+            "driverId" to driverId.trim().ifBlank { "drv_unknown" }.take(128),
+            "driverName" to driverName.trim().ifBlank { "شۆفێر" }.take(80),
+            "ordersCount" to unsettledOrders.size.toLong(),
+            "itemPriceTotalIqd" to itemPriceTotal,
+            "deliveryFeeTotalIqd" to deliveryFeeTotal,
+            "totalSettledCashIqd" to totalSettled,
+            "notes" to notes.trim().take(250),
+            "createdAt" to FieldValue.serverTimestamp(),
+            "updatedAt" to FieldValue.serverTimestamp()
+        )
+        batch.set(settlementRef, settlementPayload)
+
         try {
             batch.commit().await()
             unsettledOrders.size
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.UPDATE, "orders/batch_settle")
+            handleFirestoreError(e, OperationType.UPDATE, "settlements/$settlementId")
+            throw e
+        }
+    }
+
+    suspend fun seedTwoAdminsAndTenDrivers(): Result<Int> = runCatching {
+        val uid = requireUserId()
+        val batch = db.batch()
+        var createdCount = 0
+
+        // Second Admin (Admin 1 is the logged-in primary owner at /staff/{uid})
+        val admin2Ref = db.collection("staff").document("admin_dxp_2")
+        batch.set(
+            admin2Ref,
+            mapOf(
+                "ownerUid" to uid,
+                "companyCode" to COMPANY_CODE_DXP,
+                "name" to "ئەدمینی دووەم (بەڕێوەبەر)",
+                "phone" to "07501000002",
+                "email" to "admin2@dxppost.com",
+                "role" to StaffRole.OWNER.code,
+                "vehicleInfo" to "بەڕێوەبەرایەتی سەرەکی DXP POST",
+                "active" to true,
+                "createdAt" to FieldValue.serverTimestamp(),
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+        )
+        createdCount++
+
+        val defaultTenDrivers = listOf(
+            Triple("drv_dxp_01", "مەندووب ١ - سۆران محەمەد", "هەولێر - ناوشار"),
+            Triple("drv_dxp_02", "مەندووب ٢ - ئارام کەریم", "سلێمانی - ناوشار"),
+            Triple("drv_dxp_03", "مەندووب ٣ - کاروان عەلی", "دهۆک - ناوەند"),
+            Triple("drv_dxp_04", "مەندووب ٤ - هێمن حەسەن", "هەولێر - عەنکاوە و بەختیاری"),
+            Triple("drv_dxp_05", "مەندووب ٥ - ڕێبین جەلال", "سلێمانی - سەرچنار و تووی مەلیک"),
+            Triple("drv_dxp_06", "مەندووب ٦ - دیار فەرهاد", "کەرکووک - ڕەحیماوا"),
+            Triple("drv_dxp_07", "مەندووب ٧ - شوان عومەر", "هەڵەبجە و شارەزوور"),
+            Triple("drv_dxp_08", "مەندووب ٨ - بڕوا سەلام", "سۆران و چۆمان"),
+            Triple("drv_dxp_09", "مەندووب ٩ - زانا تاهیر", "زاخۆ و سێمێل"),
+            Triple("drv_dxp_10", "مەندووب ١٠ - توانا ئەحمەد", "گەرمیان و کەلار")
+        )
+
+        defaultTenDrivers.forEachIndexed { idx, (docId, drvName, zone) ->
+            val drvRef = db.collection("staff").document(docId)
+            val num = (idx + 1).toString().padStart(2, '0')
+            batch.set(
+                drvRef,
+                mapOf(
+                    "ownerUid" to uid,
+                    "companyCode" to COMPANY_CODE_DXP,
+                    "name" to drvName,
+                    "phone" to "075044556$num",
+                    "email" to "driver$num@dxppost.com",
+                    "role" to StaffRole.DRIVER.code,
+                    "vehicleInfo" to zone,
+                    "active" to true,
+                    "createdAt" to FieldValue.serverTimestamp(),
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            )
+            createdCount++
+        }
+
+        try {
+            batch.commit().await()
+            createdCount
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, "staff/batch_seed")
             throw e
         }
     }
@@ -388,5 +594,16 @@ class DeliveryRepository(
             handleFirestoreError(e, OperationType.DELETE, docRef.path)
             throw e
         }
+    }
+
+    private companion object {
+        val BOOTSTRAPPED_ADMIN_EMAILS = setOf(
+            "abdulbasitshwankareem@gmail.com",
+            "admin1@dxppost.com",
+            "admin2@dxppost.com",
+            "owner@dxppost.com",
+            "owner2@dxppost.com",
+            "owner3@dxppost.com"
+        )
     }
 }

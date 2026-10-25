@@ -26,6 +26,8 @@ import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DirectionsBike
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.GroupAdd
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Phone
@@ -60,8 +62,11 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.R
+import com.example.data.model.CashSettlement
 import com.example.data.model.CompanyFinancialKpis
 import com.example.data.model.DriverFinancialSummary
+import com.example.data.model.MAX_ADMINS_COUNT
+import com.example.data.model.MAX_DRIVERS_COUNT
 import com.example.data.model.StaffMember
 import com.example.data.model.StaffRole
 import com.example.data.model.formatIqd
@@ -70,11 +75,14 @@ import com.example.ui.theme.DxpDeepPurple
 import com.example.ui.theme.DxpRoyalPlum
 import com.example.ui.theme.StatusDeliveredGreen
 import com.example.ui.theme.StatusReturnedRed
+import java.text.SimpleDateFormat
+import java.util.Locale
 
 @Composable
 fun AccountingScreen(
     kpis: CompanyFinancialKpis,
     driverSummaries: List<DriverFinancialSummary>,
+    settlements: List<CashSettlement> = emptyList(),
     isOwnerView: Boolean,
     onSettleDriver: (DriverFinancialSummary) -> Unit
 ) {
@@ -114,7 +122,11 @@ fun AccountingScreen(
                             )
                             Spacer(modifier = Modifier.width(10.dp))
                             Text(
-                                text = "ژمێریاری و حیساباتی DXP POST",
+                                text = if (isOwnerView) {
+                                    "ژمێریاری و حیساباتی DXP POST"
+                                } else {
+                                    "حیسابات و پارەی وەسڵەکانی من"
+                                },
                                 style = MaterialTheme.typography.titleLarge,
                                 color = Color.White
                             )
@@ -174,7 +186,7 @@ fun AccountingScreen(
                             ) {
                                 Column(modifier = Modifier.padding(12.dp)) {
                                     Text(
-                                        text = "پاکتاوکراو (لای ئۆنەر)",
+                                        text = "پاکتاوکراو (لای ئەدمین)",
                                         style = MaterialTheme.typography.labelMedium,
                                         color = Color(0xFFA7F3D0)
                                     )
@@ -225,6 +237,47 @@ fun AccountingScreen(
                 )
             }
         }
+
+        // Real-time Cash Settlement Audit Log stored in Firestore (/settlements)
+        item {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(top = 8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.History,
+                    contentDescription = null,
+                    tint = DxpRoyalPlum
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "تۆماری پاکتاوکردنی حیسابات (${settlements.size})",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+            }
+        }
+
+        if (settlements.isEmpty()) {
+            item {
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "هێشتا هیچ وەسڵێکی پاکتاوکردنی پارە تۆمار نەکراوە.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(16.dp)
+                    )
+                }
+            }
+        } else {
+            items(settlements, key = { it.id }) { settlement ->
+                CashSettlementReceiptCard(settlement = settlement)
+            }
+        }
     }
 
     if (summaryToConfirmSettle != null) {
@@ -260,6 +313,66 @@ fun AccountingScreen(
                 }
             }
         )
+    }
+}
+
+@Composable
+private fun CashSettlementReceiptCard(settlement: CashSettlement) {
+    val dateString = remember(settlement.createdAt) {
+        settlement.createdAt?.toDate()?.let {
+            SimpleDateFormat("yyyy/MM/dd - HH:mm", Locale.US).format(it)
+        } ?: "ئێستا"
+    }
+
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, StatusDeliveredGreen.copy(alpha = 0.25f)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("settlement_receipt_${settlement.id}")
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Verified,
+                        contentDescription = null,
+                        tint = StatusDeliveredGreen,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = settlement.driverName,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Text(
+                    text = formatIqd(settlement.totalSettledCashIqd),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = StatusDeliveredGreen,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            Text(
+                text = "ژمارەی وەسڵەکان: ${settlement.ordersCount} • نرخی کاڵا: ${formatIqd(settlement.itemPriceTotalIqd)} • کرێ: ${formatIqd(settlement.deliveryFeeTotalIqd)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = "${settlement.notes} • کات: $dateString",
+                style = MaterialTheme.typography.labelSmall,
+                color = DxpRoyalPlum
+            )
+        }
     }
 }
 
@@ -456,9 +569,16 @@ fun DriversManagementScreen(
     staffList: List<StaffMember>,
     isOwnerView: Boolean,
     onAddDriverClick: () -> Unit,
+    onSeedTeamClick: () -> Unit = {},
     onEditStaffMember: (StaffMember) -> Unit
 ) {
     val context = LocalContext.current
+    val adminsCount = remember(staffList) {
+        staffList.count { it.role == StaffRole.OWNER.code && it.active }
+    }
+    val driversCount = remember(staffList) {
+        staffList.count { it.role == StaffRole.DRIVER.code && it.active }
+    }
 
     LazyColumn(
         modifier = Modifier
@@ -468,37 +588,77 @@ fun DriversManagementScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+            Card(
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = DxpRoyalPlum.copy(alpha = 0.08f)
+                ),
+                border = BorderStroke(1.dp, DxpRoyalPlum.copy(alpha = 0.2f)),
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Column {
-                    Text(
-                        text = "شۆفێرەکان و ستافی DXP POST",
-                        style = MaterialTheme.typography.titleLarge
-                    )
-                    Text(
-                        text = "بەڕێوەبردنی مەندووبەکان و ئۆنەرەکانی کۆمپانیا",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
-                if (isOwnerView) {
-                    Button(
-                        onClick = onAddDriverClick,
-                        colors = ButtonDefaults.buttonColors(containerColor = DxpRoyalPlum),
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.testTag("add_new_driver_btn")
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.PersonAdd,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("زیادکردنی شۆفێر")
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "ستافی DXP POST (٢ ئەدمین و ١٠ شۆفێر)",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = DxpRoyalPlum,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "ئەدمینەکان: $adminsCount / $MAX_ADMINS_COUNT • شۆفێرەکان: $driversCount / $MAX_DRIVERS_COUNT",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        if (isOwnerView) {
+                            Button(
+                                onClick = onAddDriverClick,
+                                colors = ButtonDefaults.buttonColors(containerColor = DxpRoyalPlum),
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier.testTag("add_new_driver_btn")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.PersonAdd,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("زیادکردنی ئەندام")
+                            }
+                        }
+                    }
+
+                    if (isOwnerView && (adminsCount < MAX_ADMINS_COUNT || driversCount < MAX_DRIVERS_COUNT)) {
+                        OutlinedButton(
+                            onClick = onSeedTeamClick,
+                            border = BorderStroke(1.dp, DxpRoyalPlum),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("seed_2_admins_10_drivers_btn")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.GroupAdd,
+                                contentDescription = null,
+                                tint = DxpRoyalPlum,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "ئامادەکردنی سیستەمی ٢ ئەدمین و ١٠ شۆفێر بە یەک کلیک",
+                                color = DxpRoyalPlum,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
             }
@@ -535,7 +695,7 @@ fun DriversManagementScreen(
                                 }
                             ) {
                                 Text(
-                                    text = roleEnum.kurdishTitle,
+                                    text = if (roleEnum == StaffRole.OWNER) "ئەدمین / ئۆنەر" else roleEnum.kurdishTitle,
                                     style = MaterialTheme.typography.labelMedium,
                                     color = if (roleEnum == StaffRole.OWNER) Color.White else DxpRoyalPlum,
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
@@ -548,6 +708,13 @@ fun DriversManagementScreen(
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        if (member.email.isNotBlank()) {
+                            Text(
+                                text = "ئیمەیڵ: ${member.email}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                         if (member.phone.isNotBlank()) {
                             Text(
                                 text = "مۆبایل: ${member.phone}",
@@ -598,15 +765,17 @@ fun ProfileAndSettingsScreen(
     currentUserEmail: String,
     staffList: List<StaffMember>,
     activeRole: StaffRole,
+    canSwitchRole: Boolean = true,
     onSwitchRole: (StaffRole) -> Unit,
     onEditOwnProfile: (StaffMember) -> Unit,
     onSignOutClick: () -> Unit
 ) {
-    val myProfile = remember(staffList, currentUserId) {
+    val myProfile = remember(staffList, currentUserId, currentUserEmail) {
         staffList.firstOrNull { it.id == currentUserId }
             ?: StaffMember(
                 id = currentUserId,
                 name = "بەکارهێنەری DXP POST",
+                email = currentUserEmail,
                 role = activeRole.code,
                 vehicleInfo = "گەیاندنی گشتی"
             )
@@ -689,6 +858,9 @@ fun ProfileAndSettingsScreen(
                         color = DxpRoyalPlum
                     )
                     Text("ناو: ${myProfile.name}")
+                    if (currentUserEmail.isNotBlank()) {
+                        Text("ئیمەیڵی گووگڵ: $currentUserEmail")
+                    }
                     Text("ژمارە مۆبایل: ${myProfile.phone.ifBlank { "تۆمار نەکراوە" }}")
                     Text("ناوچە / هۆکاری گواستنەوە: ${myProfile.vehicleInfo}")
 
@@ -707,25 +879,27 @@ fun ProfileAndSettingsScreen(
                             Text("دەستکاریکردنی پرۆفایل")
                         }
 
-                        OutlinedButton(
-                            onClick = {
-                                val next = if (activeRole == StaffRole.OWNER) {
-                                    StaffRole.DRIVER
-                                } else {
-                                    StaffRole.OWNER
-                                }
-                                onSwitchRole(next)
-                            },
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text(
-                                text = if (activeRole == StaffRole.OWNER) {
-                                    "گۆڕین بۆ دیمەنی مەندووب"
-                                } else {
-                                    "گۆڕین بۆ دیمەنی ئۆنەر"
-                                }
-                            )
+                        if (canSwitchRole) {
+                            OutlinedButton(
+                                onClick = {
+                                    val next = if (activeRole == StaffRole.OWNER) {
+                                        StaffRole.DRIVER
+                                    } else {
+                                        StaffRole.OWNER
+                                    }
+                                    onSwitchRole(next)
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(
+                                    text = if (activeRole == StaffRole.OWNER) {
+                                        "گۆڕین بۆ دیمەنی مەندووب"
+                                    } else {
+                                        "گۆڕین بۆ دیمەنی ئەدمین"
+                                    }
+                                )
+                            }
                         }
                     }
                 }

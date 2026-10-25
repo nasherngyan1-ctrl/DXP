@@ -502,10 +502,12 @@ fun ReturnOrderReasonDialog(
 @Composable
 fun AddOrEditStaffDialog(
     existingMember: StaffMember? = null,
+    isAdminEditor: Boolean = true,
     onDismiss: () -> Unit,
     onSave: (
         name: String,
         phone: String,
+        email: String,
         role: StaffRole,
         vehicleInfo: String,
         active: Boolean
@@ -513,6 +515,7 @@ fun AddOrEditStaffDialog(
 ) {
     var name by remember { mutableStateOf(existingMember?.name ?: "") }
     var phone by remember { mutableStateOf(existingMember?.phone ?: "") }
+    var email by remember { mutableStateOf(existingMember?.email ?: "") }
     var vehicleInfo by remember {
         mutableStateOf(existingMember?.vehicleInfo ?: "ماتۆڕ / ناوشار")
     }
@@ -528,13 +531,16 @@ fun AddOrEditStaffDialog(
         onDismissRequest = onDismiss,
         title = {
             Text(
-                text = if (existingMember == null) "زیادکردنی شۆفێری نوێ (مەندووب)" else "دەستکاریکردنی زانیاری ستاف",
+                text = if (existingMember == null) "زیادکردنی ستاف (٢ ئەدمین و ١٠ شۆفێر)" else "دەستکاریکردنی زانیاری ستاف",
                 style = MaterialTheme.typography.titleLarge,
                 color = DxpRoyalPlum
             )
         },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
                 if (errorText != null) {
                     Text(
                         text = errorText!!,
@@ -546,7 +552,7 @@ fun AddOrEditStaffDialog(
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("ناوی سیانی شۆفێر / بەکارهێنەر *") },
+                    label = { Text("ناوی سیانی شۆفێر / ئەدمین *") },
                     singleLine = true,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -565,6 +571,17 @@ fun AddOrEditStaffDialog(
                 )
 
                 OutlinedTextField(
+                    value = email,
+                    onValueChange = { email = it },
+                    label = { Text("ئیمەیڵی گووگڵ (بۆ چوونەژوورەوەی ئامێرەکەی)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("input_driver_email")
+                )
+
+                OutlinedTextField(
                     value = vehicleInfo,
                     onValueChange = { vehicleInfo = it },
                     label = { Text("جۆری هۆکاری گواستنەوە و ناوچەی کارکردن") },
@@ -574,30 +591,32 @@ fun AddOrEditStaffDialog(
                         .testTag("input_driver_vehicle")
                 )
 
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("ڕۆڵ لە کۆمپانیا:", style = MaterialTheme.typography.labelLarge)
-                    FilterChip(
-                        selected = role == StaffRole.DRIVER,
-                        onClick = { role = StaffRole.DRIVER },
-                        label = { Text("شۆفێر (مەندووب)") }
-                    )
-                    FilterChip(
-                        selected = role == StaffRole.OWNER,
-                        onClick = { role = StaffRole.OWNER },
-                        label = { Text("ئۆنەر") }
-                    )
-                }
+                if (isAdminEditor) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("ڕۆڵ لە کۆمپانیا:", style = MaterialTheme.typography.labelLarge)
+                        FilterChip(
+                            selected = role == StaffRole.DRIVER,
+                            onClick = { role = StaffRole.DRIVER },
+                            label = { Text("شۆفێر (١٠)") }
+                        )
+                        FilterChip(
+                            selected = role == StaffRole.OWNER,
+                            onClick = { role = StaffRole.OWNER },
+                            label = { Text("ئەدمین (٢)") }
+                        )
+                    }
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("ئامادەیە بۆ وەرگرتنی پاکێج:", style = MaterialTheme.typography.bodyMedium)
-                    Switch(checked = active, onCheckedChange = { active = it })
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("ئامادەیە بۆ وەرگرتنی پاکێج:", style = MaterialTheme.typography.bodyMedium)
+                        Switch(checked = active, onCheckedChange = { active = it })
+                    }
                 }
             }
         },
@@ -605,10 +624,10 @@ fun AddOrEditStaffDialog(
             Button(
                 onClick = {
                     if (name.isBlank()) {
-                        errorText = "تکایە ناوی شۆفێر بنووسە"
+                        errorText = "تکایە ناوی شۆفێر یان ئەدمین بنووسە"
                         return@Button
                     }
-                    onSave(name, phone, role, vehicleInfo, active)
+                    onSave(name, phone, email, role, vehicleInfo, active)
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = DxpRoyalPlum),
                 modifier = Modifier.testTag("confirm_save_driver_btn")

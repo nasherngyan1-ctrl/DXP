@@ -71,6 +71,7 @@ import com.example.ui.theme.StatusReturnedRed
 @Composable
 fun DxpTopHeader(
     activeRole: StaffRole,
+    canSwitchRole: Boolean = true,
     onSwitchRole: (StaffRole) -> Unit,
     userName: String
 ) {
@@ -141,30 +142,50 @@ fun DxpTopHeader(
                 }
             }
 
-            // Role Switcher Pill (Owner / Driver)
+            // Role Switcher Pill (Admins can preview both views; Drivers see locked Driver badge)
             Surface(
                 shape = RoundedCornerShape(20.dp),
                 color = Color.White.copy(alpha = 0.14f),
                 border = BorderStroke(1.dp, Color.White.copy(alpha = 0.25f)),
                 modifier = Modifier.testTag("role_switcher_pill")
             ) {
-                Row(
-                    modifier = Modifier.padding(4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    RoleChipItem(
-                        label = "ئۆنەر",
-                        selected = activeRole == StaffRole.OWNER,
-                        onClick = { onSwitchRole(StaffRole.OWNER) },
-                        testTag = "switch_role_owner"
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    RoleChipItem(
-                        label = "مەندووب",
-                        selected = activeRole == StaffRole.DRIVER,
-                        onClick = { onSwitchRole(StaffRole.DRIVER) },
-                        testTag = "switch_role_driver"
-                    )
+                if (canSwitchRole) {
+                    Row(
+                        modifier = Modifier.padding(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RoleChipItem(
+                            label = "ئەدمین",
+                            selected = activeRole == StaffRole.OWNER,
+                            onClick = { onSwitchRole(StaffRole.OWNER) },
+                            testTag = "switch_role_owner"
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        RoleChipItem(
+                            label = "مەندووب",
+                            selected = activeRole == StaffRole.DRIVER,
+                            onClick = { onSwitchRole(StaffRole.DRIVER) },
+                            testTag = "switch_role_driver"
+                        )
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.DirectionsBike,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "شۆفێر (مەندووب)",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = Color.White
+                        )
+                    }
                 }
             }
         }
