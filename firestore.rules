@@ -1,0 +1,205 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net: Default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Reusable Hardened Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        ('email' in request.auth.token &&
+          request.auth.token.email == 'abdulbasitshwankareem@gmail.com' &&
+          request.auth.token.email_verified == true) ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isCompanyOwner() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/staff/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/staff/$(request.auth.uid)).data.role == 'OWNER';
+    }
+
+    function isCompanyStaff() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/staff/$(request.auth.uid));
+    }
+
+    // 3. Schema Validation Blueprints
+    function isValidStaffMember(data) {
+      return data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
+             data.companyCode is string && data.companyCode == 'DXP_POST' &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 80 &&
+             data.phone is string && data.phone.size() <= 30 &&
+             data.role is string && (data.role == 'OWNER' || data.role == 'DRIVER') &&
+             data.vehicleInfo is string && data.vehicleInfo.size() <= 80 &&
+             data.active is bool &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidDeliveryOrder(data) {
+      return data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
+             data.companyCode is string && data.companyCode == 'DXP_POST' &&
+             data.trackingCode is string && data.trackingCode.size() >= 1 && data.trackingCode.size() <= 40 &&
+             data.senderName is string && data.senderName.size() <= 80 &&
+             data.customerName is string && data.customerName.size() >= 1 && data.customerName.size() <= 80 &&
+             data.customerPhone is string && data.customerPhone.size() >= 1 && data.customerPhone.size() <= 30 &&
+             data.cityArea is string && data.cityArea.size() >= 1 && data.cityArea.size() <= 80 &&
+             data.addressDetails is string && data.addressDetails.size() <= 250 &&
+             data.notes is string && data.notes.size() <= 300 &&
+             data.itemPriceIqd is int && data.itemPriceIqd >= 0 && data.itemPriceIqd <= 1000000000 &&
+             data.deliveryFeeIqd is int && data.deliveryFeeIqd >= 0 && data.deliveryFeeIqd <= 100000000 &&
+             data.totalAmountIqd is int && data.totalAmountIqd >= 0 && data.totalAmountIqd <= 1100000000 &&
+             data.status is string && data.status in ['PENDING', 'ASSIGNED', 'ON_THE_WAY', 'DELIVERED', 'RETURNED'] &&
+             data.returnReason is string && data.returnReason.size() <= 200 &&
+             data.assignedDriverId is string && data.assignedDriverId.size() <= 128 &&
+             data.assignedDriverName is string && data.assignedDriverName.size() <= 80 &&
+             data.isSettled is bool &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    // 4. Collection: /staff/{staffId}
+    match /staff/{staffId} {
+      allow get: if isSignedIn() && isValidId(staffId) && (
+        staffId == request.auth.uid ||
+        existing().ownerUid == request.auth.uid ||
+        isCompanyOwner() ||
+        isAdmin()
+      );
+
+      allow list: if isSignedIn() && (
+        existing().ownerUid == request.auth.uid ||
+        existing().companyCode == 'DXP_POST'
+      );
+
+      allow create: if isSignedIn() &&
+        isValidId(staffId) &&
+        incoming().keys().hasAll([
+          'ownerUid', 'companyCode', 'name', 'phone', 'role',
+          'vehicleInfo', 'active', 'createdAt', 'updatedAt'
+        ]) &&
+        incoming().keys().hasOnly([
+          'ownerUid', 'companyCode', 'name', 'phone', 'role',
+          'vehicleInfo', 'active', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidStaffMember(incoming()) &&
+        incoming().ownerUid == request.auth.uid;
+
+      allow update: if isSignedIn() &&
+        isValidId(staffId) &&
+        isValidStaffMember(incoming()) &&
+        incoming().keys().hasOnly([
+          'ownerUid', 'companyCode', 'name', 'phone', 'role',
+          'vehicleInfo', 'active', 'createdAt', 'updatedAt'
+        ]) &&
+        incoming().ownerUid == existing().ownerUid &&
+        incoming().companyCode == existing().companyCode &&
+        incoming().createdAt == existing().createdAt &&
+        (staffId == request.auth.uid || existing().ownerUid == request.auth.uid || isCompanyOwner() || isAdmin()) &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'name', 'phone', 'role', 'vehicleInfo', 'active', 'updatedAt'
+        ]);
+
+      allow delete: if isSignedIn() &&
+        isValidId(staffId) &&
+        (existing().ownerUid == request.auth.uid || isCompanyOwner() || isAdmin());
+    }
+
+    // 5. Collection: /orders/{orderId}
+    match /orders/{orderId} {
+      allow get: if isSignedIn() && isValidId(orderId) && (
+        existing().ownerUid == request.auth.uid ||
+        existing().assignedDriverId == request.auth.uid ||
+        isCompanyOwner() ||
+        isAdmin()
+      );
+
+      allow list: if isSignedIn() && (
+        existing().ownerUid == request.auth.uid ||
+        existing().assignedDriverId == request.auth.uid ||
+        existing().companyCode == 'DXP_POST'
+      );
+
+      allow create: if isSignedIn() &&
+        isValidId(orderId) &&
+        incoming().keys().hasAll([
+          'ownerUid', 'companyCode', 'trackingCode', 'senderName',
+          'customerName', 'customerPhone', 'cityArea', 'addressDetails',
+          'notes', 'itemPriceIqd', 'deliveryFeeIqd', 'totalAmountIqd',
+          'status', 'returnReason', 'assignedDriverId', 'assignedDriverName',
+          'isSettled', 'createdAt', 'updatedAt'
+        ]) &&
+        incoming().keys().hasOnly([
+          'ownerUid', 'companyCode', 'trackingCode', 'senderName',
+          'customerName', 'customerPhone', 'cityArea', 'addressDetails',
+          'notes', 'itemPriceIqd', 'deliveryFeeIqd', 'totalAmountIqd',
+          'status', 'returnReason', 'assignedDriverId', 'assignedDriverName',
+          'isSettled', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidDeliveryOrder(incoming()) &&
+        incoming().ownerUid == request.auth.uid;
+
+      allow update: if isSignedIn() &&
+        isValidId(orderId) &&
+        isValidDeliveryOrder(incoming()) &&
+        incoming().keys().hasOnly([
+          'ownerUid', 'companyCode', 'trackingCode', 'senderName',
+          'customerName', 'customerPhone', 'cityArea', 'addressDetails',
+          'notes', 'itemPriceIqd', 'deliveryFeeIqd', 'totalAmountIqd',
+          'status', 'returnReason', 'assignedDriverId', 'assignedDriverName',
+          'isSettled', 'createdAt', 'updatedAt'
+        ]) &&
+        incoming().ownerUid == existing().ownerUid &&
+        incoming().companyCode == existing().companyCode &&
+        incoming().trackingCode == existing().trackingCode &&
+        incoming().createdAt == existing().createdAt && (
+          // Action 1: Owner / Creator / Admin full order management & settlement
+          ((existing().ownerUid == request.auth.uid || isCompanyOwner() || isAdmin()) &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'senderName', 'customerName', 'customerPhone', 'cityArea',
+              'addressDetails', 'notes', 'itemPriceIqd', 'deliveryFeeIqd',
+              'totalAmountIqd', 'status', 'returnReason', 'assignedDriverId',
+              'assignedDriverName', 'isSettled', 'updatedAt'
+            ])
+          ) ||
+          // Action 2: Assigned Driver or active Staff updates delivery status & returnReason
+          ((existing().assignedDriverId == request.auth.uid || isCompanyStaff()) &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'returnReason', 'updatedAt'
+            ])
+          ) ||
+          // Action 3: Driver claims an unassigned order
+          (existing().assignedDriverId == '' &&
+            incoming().assignedDriverId == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'assignedDriverId', 'assignedDriverName', 'status', 'updatedAt'
+            ])
+          )
+        );
+
+      allow delete: if isSignedIn() &&
+        isValidId(orderId) &&
+        (existing().ownerUid == request.auth.uid || isCompanyOwner() || isAdmin());
+    }
+  }
+}

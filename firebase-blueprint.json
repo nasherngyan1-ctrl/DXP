@@ -1,0 +1,180 @@
+{
+  "entities": {
+    "StaffMember": {
+      "title": "StaffMember",
+      "description": "Represents an Owner or Delivery Driver (Mandoub) in DXP POST.",
+      "type": "object",
+      "properties": {
+        "ownerUid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the creator/user."
+        },
+        "companyCode": {
+          "type": "string",
+          "enum": ["DXP_POST"],
+          "description": "Company workspace identifier for DXP POST."
+        },
+        "name": {
+          "type": "string",
+          "description": "Full display name of the owner or driver."
+        },
+        "phone": {
+          "type": "string",
+          "description": "Contact phone number."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["OWNER", "DRIVER"],
+          "description": "Role within the delivery company."
+        },
+        "vehicleInfo": {
+          "type": "string",
+          "description": "Vehicle type, plate number, or assigned delivery zone."
+        },
+        "active": {
+          "type": "boolean",
+          "description": "Whether the staff member is currently active for deliveries."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when created (FieldValue.serverTimestamp())."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when last updated (FieldValue.serverTimestamp())."
+        }
+      },
+      "required": [
+        "ownerUid",
+        "companyCode",
+        "name",
+        "phone",
+        "role",
+        "vehicleInfo",
+        "active",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "DeliveryOrder": {
+      "title": "DeliveryOrder",
+      "description": "Represents a commercial package delivery order (wasl) in DXP POST.",
+      "type": "object",
+      "properties": {
+        "ownerUid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the user who created the order."
+        },
+        "companyCode": {
+          "type": "string",
+          "enum": ["DXP_POST"],
+          "description": "Company workspace identifier for DXP POST."
+        },
+        "trackingCode": {
+          "type": "string",
+          "description": "Human-readable order code (e.g., DXP-1042)."
+        },
+        "senderName": {
+          "type": "string",
+          "description": "Merchant, store, or sender name."
+        },
+        "customerName": {
+          "type": "string",
+          "description": "Recipient customer name."
+        },
+        "customerPhone": {
+          "type": "string",
+          "description": "Recipient customer phone number."
+        },
+        "cityArea": {
+          "type": "string",
+          "description": "City and neighborhood/district."
+        },
+        "addressDetails": {
+          "type": "string",
+          "description": "Detailed street/landmark delivery address."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Special delivery notes or instructions."
+        },
+        "itemPriceIqd": {
+          "type": "integer",
+          "description": "Price of the package goods in Iraqi Dinars (IQD)."
+        },
+        "deliveryFeeIqd": {
+          "type": "integer",
+          "description": "Delivery fee in Iraqi Dinars (IQD)."
+        },
+        "totalAmountIqd": {
+          "type": "integer",
+          "description": "Total amount to collect from customer (itemPriceIqd + deliveryFeeIqd)."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["PENDING", "ASSIGNED", "ON_THE_WAY", "DELIVERED", "RETURNED"],
+          "description": "Current real-time delivery status."
+        },
+        "returnReason": {
+          "type": "string",
+          "description": "Reason if the package was returned or postponed."
+        },
+        "assignedDriverId": {
+          "type": "string",
+          "description": "Staff ID / UID of the assigned driver (empty if unassigned)."
+        },
+        "assignedDriverName": {
+          "type": "string",
+          "description": "Display name of the assigned driver."
+        },
+        "isSettled": {
+          "type": "boolean",
+          "description": "Whether the cash collected for this order has been settled with the owner."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when created (FieldValue.serverTimestamp())."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when last updated (FieldValue.serverTimestamp())."
+        }
+      },
+      "required": [
+        "ownerUid",
+        "companyCode",
+        "trackingCode",
+        "senderName",
+        "customerName",
+        "customerPhone",
+        "cityArea",
+        "addressDetails",
+        "notes",
+        "itemPriceIqd",
+        "deliveryFeeIqd",
+        "totalAmountIqd",
+        "status",
+        "returnReason",
+        "assignedDriverId",
+        "assignedDriverName",
+        "isSettled",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/staff/{staffId}": {
+      "schema": "StaffMember",
+      "description": "Collection of DXP POST owners and delivery drivers."
+    },
+    "/orders/{orderId}": {
+      "schema": "DeliveryOrder",
+      "description": "Collection of DXP POST delivery orders synchronized in real time."
+    }
+  }
+}

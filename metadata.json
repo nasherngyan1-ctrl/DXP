@@ -1,0 +1,6 @@
+{
+  "name": "DXP POST",
+  "description": "سیستەمی بەڕێوەبردنی پۆست و گەیاندنی DXP POST بۆ ئۆنەر و شۆفێرەکان (مەندووب) بە شێوەی ڕاستەوخۆ و ژمێریاری تەواو",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

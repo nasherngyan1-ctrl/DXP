@@ -1,0 +1,14 @@
+<resources>
+    <string name="app_name">DXP POST</string>
+    <string name="app_subtitle">سیستەمی بەڕێوەبردنی پۆست و گەیاندن</string>
+    <string name="sign_in_google">چوونەژوورەوە بە هەژماری گووگڵ</string>
+    <string name="role_owner">ئۆنەر (بەڕێوەبەر)</string>
+    <string name="role_driver">شۆفێر (مەندووب)</string>
+    <string name="tab_orders">وەسڵەکان</string>
+    <string name="tab_drivers">شۆفێرەکان</string>
+    <string name="tab_accounting">ژمێریاری و حیسابات</string>
+    <string name="tab_profile">هەژمارەکەم</string>
+    <string name="add_new_order">زیادکردنی وەسڵی نوێ</string>
+    <string name="call_customer">پەیوەندی بە کڕیار</string>
+    <string name="settle_driver_cash">پاکتاوکردنی حیساب (تەسفیە)</string>
+</resources>
