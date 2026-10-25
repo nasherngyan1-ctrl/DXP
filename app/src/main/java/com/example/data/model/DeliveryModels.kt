@@ -8,8 +8,7 @@ import java.text.NumberFormat
 import java.util.Locale
 
 const val COMPANY_CODE_DXP = "DXP_POST"
-const val MAX_ADMINS_COUNT = 2
-const val MAX_DRIVERS_COUNT = 10
+const val ADMIN_SECRET_CODE = "DXPPOST"
 
 enum class StaffRole(val code: String, val kurdishTitle: String) {
     OWNER("OWNER", "ئەدمین (ئۆنەر)"),
@@ -47,6 +46,7 @@ data class StaffMember(
     val phone: String = "",
     val email: String = "",
     val role: String = StaffRole.DRIVER.code,
+    val adminCode: String = "",
     val vehicleInfo: String = "",
     val active: Boolean = true,
     @ServerTimestamp val createdAt: Timestamp? = null,
@@ -60,11 +60,13 @@ data class DeliveryOrder(
     val companyCode: String = COMPANY_CODE_DXP,
     val trackingCode: String = "",
     val senderName: String = "",
+    val senderPhone: String = "",
     val customerName: String = "",
     val customerPhone: String = "",
     val cityArea: String = "",
     val addressDetails: String = "",
     val notes: String = "",
+    val packageImageBase64: String = "",
     val itemPriceIqd: Long = 0L,
     val deliveryFeeIqd: Long = 0L,
     val totalAmountIqd: Long = 0L,

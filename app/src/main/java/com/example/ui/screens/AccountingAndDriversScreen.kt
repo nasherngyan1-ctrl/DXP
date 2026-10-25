@@ -22,13 +22,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.DirectionsBike
+import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.DirectionsBike
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.GroupAdd
 import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.Logout
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Verified
@@ -65,8 +66,6 @@ import com.example.R
 import com.example.data.model.CashSettlement
 import com.example.data.model.CompanyFinancialKpis
 import com.example.data.model.DriverFinancialSummary
-import com.example.data.model.MAX_ADMINS_COUNT
-import com.example.data.model.MAX_DRIVERS_COUNT
 import com.example.data.model.StaffMember
 import com.example.data.model.StaffRole
 import com.example.data.model.formatIqd
@@ -238,7 +237,6 @@ fun AccountingScreen(
             }
         }
 
-        // Real-time Cash Settlement Audit Log stored in Firestore (/settlements)
         item {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -435,7 +433,7 @@ private fun DriverSettlementCard(
                             .background(DxpRoyalPlum.copy(alpha = 0.12f))
                     ) {
                         Icon(
-                            imageVector = Icons.Default.DirectionsBike,
+                            imageVector = Icons.AutoMirrored.Filled.DirectionsBike,
                             contentDescription = null,
                             tint = DxpRoyalPlum
                         )
@@ -607,13 +605,13 @@ fun DriversManagementScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "ستافی DXP POST (٢ ئەدمین و ١٠ شۆفێر)",
+                                text = "ستافی DXP POST (ئەدمین و شۆفێرەکان)",
                                 style = MaterialTheme.typography.titleMedium,
                                 color = DxpRoyalPlum,
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "ئەدمینەکان: $adminsCount / $MAX_ADMINS_COUNT • شۆفێرەکان: $driversCount / $MAX_DRIVERS_COUNT",
+                                text = "ئەدمینەکان: $adminsCount (بێ سنوور) • شۆفێرەکان: $driversCount",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -637,7 +635,7 @@ fun DriversManagementScreen(
                         }
                     }
 
-                    if (isOwnerView && (adminsCount < MAX_ADMINS_COUNT || driversCount < MAX_DRIVERS_COUNT)) {
+                    if (isOwnerView && driversCount < 10) {
                         OutlinedButton(
                             onClick = onSeedTeamClick,
                             border = BorderStroke(1.dp, DxpRoyalPlum),
@@ -654,7 +652,7 @@ fun DriversManagementScreen(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "ئامادەکردنی سیستەمی ٢ ئەدمین و ١٠ شۆفێر بە یەک کلیک",
+                                text = "ئامادەکردنی ستافی بنەڕەتی بە یەک کلیک",
                                 color = DxpRoyalPlum,
                                 fontWeight = FontWeight.Bold
                             )
@@ -767,6 +765,7 @@ fun ProfileAndSettingsScreen(
     activeRole: StaffRole,
     canSwitchRole: Boolean = true,
     onSwitchRole: (StaffRole) -> Unit,
+    onRequestAdminCode: () -> Unit = {},
     onEditOwnProfile: (StaffMember) -> Unit,
     onSignOutClick: () -> Unit
 ) {
@@ -900,6 +899,22 @@ fun ProfileAndSettingsScreen(
                                     }
                                 )
                             }
+                        } else {
+                            OutlinedButton(
+                                onClick = onRequestAdminCode,
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("unlock_admin_code_btn")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.LockOpen,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("چالاککردنی ئەدمین بە کۆد")
+                            }
                         }
                     }
                 }
@@ -917,7 +932,7 @@ fun ProfileAndSettingsScreen(
                     .height(52.dp)
                     .testTag("sign_out_button")
             ) {
-                Icon(imageVector = Icons.Default.Logout, contentDescription = null)
+                Icon(imageVector = Icons.AutoMirrored.Filled.Logout, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("چوونەدەرەوە لە هەژمار", style = MaterialTheme.typography.titleMedium)
             }

@@ -21,10 +21,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.DirectionsBike
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.DirectionsBike
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
@@ -98,7 +98,6 @@ fun OrdersScreen(
     var orderForDriverAssign by remember { mutableStateOf<DeliveryOrder?>(null) }
     var orderForReturnReason by remember { mutableStateOf<DeliveryOrder?>(null) }
 
-    // In Driver Mode, determine which driver's orders to show (defaulting to currentUserId if they have orders, or selected driver filter)
     val effectiveDriverIdForDriverMode = remember(activeRole, selectedDriverFilterId, currentUserId, drivers, orders) {
         if (activeRole == StaffRole.DRIVER) {
             selectedDriverFilterId
@@ -122,7 +121,7 @@ fun OrdersScreen(
     ) {
         orders.filter { order ->
             val matchesRoleAndDriver = if (activeRole == StaffRole.DRIVER) {
-                if (selectedDriverFilterId == "ALL_DRIVERS") {
+                if (selectedDriverFilterId == "ALL_DRIVERS" || orders.all { it.assignedDriverId == currentUserId }) {
                     true
                 } else {
                     order.assignedDriverId == effectiveDriverIdForDriverMode
@@ -138,6 +137,7 @@ fun OrdersScreen(
                 order.trackingCode.contains(q, ignoreCase = true) ||
                 order.customerName.contains(q, ignoreCase = true) ||
                 order.customerPhone.contains(q, ignoreCase = true) ||
+                order.senderPhone.contains(q, ignoreCase = true) ||
                 order.cityArea.contains(q, ignoreCase = true) ||
                 order.senderName.contains(q, ignoreCase = true) ||
                 order.assignedDriverName.contains(q, ignoreCase = true)
@@ -162,7 +162,8 @@ fun OrdersScreen(
                     drivers = drivers,
                     orders = orders,
                     selectedDriverId = if (selectedDriverFilterId == "ALL_DRIVERS") "ALL_DRIVERS" else effectiveDriverIdForDriverMode,
-                    onSelectDriverId = { id -> onSelectDriverFilter(id) }
+                    onSelectDriverId = { id -> onSelectDriverFilter(id) },
+                    onAddPackageClick = onAddNewOrderClick
                 )
             }
         }
@@ -174,7 +175,7 @@ fun OrdersScreen(
                     value = searchQuery,
                     onValueChange = onSearchQueryChange,
                     placeholder = {
-                        Text("گەڕان بە کۆدی وەسڵ، ناوی کڕیار، ژمارە مۆبایل، شار...")
+                        Text("گەڕان بە کۆدی وەسڵ، ناوی نێرەر/وەرگر، ژمارە مۆبایل، شوێن...")
                     },
                     leadingIcon = {
                         Icon(
@@ -483,13 +484,15 @@ private fun DriverWorkspaceBanner(
     drivers: List<StaffMember>,
     orders: List<DeliveryOrder>,
     selectedDriverId: String?,
-    onSelectDriverId: (String?) -> Unit
+    onSelectDriverId: (String?) -> Unit,
+    onAddPackageClick: () -> Unit
 ) {
     val activeDriverOrders = remember(orders, selectedDriverId) {
         if (selectedDriverId == "ALL_DRIVERS" || selectedDriverId == null) {
             orders
         } else {
-            orders.filter { it.assignedDriverId == selectedDriverId }
+            val filtered = orders.filter { it.assignedDriverId == selectedDriverId }
+            if (filtered.isEmpty()) orders else filtered
         }
     }
     val remainingToDeliver = activeDriverOrders.count {
@@ -518,7 +521,7 @@ private fun DriverWorkspaceBanner(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
-                        imageVector = Icons.Default.DirectionsBike,
+                        imageVector = Icons.AutoMirrored.Filled.DirectionsBike,
                         contentDescription = null,
                         tint = Color.White,
                         modifier = Modifier.size(24.dp)
@@ -544,36 +547,23 @@ private fun DriverWorkspaceBanner(
                 }
             }
 
-            if (drivers.isNotEmpty()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    drivers.forEach { drv ->
-                        FilterChip(
-                            selected = selectedDriverId == drv.id,
-                            onClick = { onSelectDriverId(drv.id) },
-                            label = { Text(drv.name) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = Color.White,
-                                selectedLabelColor = DxpRoyalPlum,
-                                labelColor = Color.White
-                            )
-                        )
-                    }
-                    FilterChip(
-                        selected = selectedDriverId == "ALL_DRIVERS",
-                        onClick = { onSelectDriverId("ALL_DRIVERS") },
-                        label = { Text("هەموو پاکێجەکان") },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = Color.White,
-                            selectedLabelColor = DxpRoyalPlum,
-                            labelColor = Color.White
-                        )
-                    )
-                }
+            Button(
+                onClick = onAddPackageClick,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color.White,
+                    contentColor = DxpRoyalPlum
+                ),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("driver_banner_add_package_btn")
+            ) {
+                Icon(imageVector = Icons.Default.Add, contentDescription = null)
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = "زیادکردنی کاڵا / وەسڵی نوێ (لەگەڵ وێنە و ژمارەی نێرەر و وەرگر)",
+                    fontWeight = FontWeight.Bold
+                )
             }
 
             Row(
@@ -640,35 +630,35 @@ private fun EmptyOrdersCard(
                 text = if (hasAnyOrdersInSystem) {
                     "هیچ وەسڵێک بەم فلتەرە نەدۆزرایەوە"
                 } else {
-                    "هێشتا هیچ وەسڵێک لە سیستەمی DXP POST تۆمار نەکراوە"
+                    "هێشتا هیچ کاڵا یان وەسڵێک لە سیستەمی DXP POST تۆمار نەکراوە"
                 },
                 style = MaterialTheme.typography.titleMedium,
                 textAlign = TextAlign.Center
             )
 
             Text(
-                text = "ئۆنەر دەتوانێت وەسڵی نوێ زیاد بکات و شۆفێری بۆ دیاری بکات بۆ ئەوەی دەستبەجێ لای هەمووان دەرکەوێت.",
+                text = "شۆفێر یان ئەدمین دەتوانن کاڵا و وەسڵی نوێ زیاد بکەن لەگەڵ وێنەی کاڵاکە و ژمارەی نێرەر و وەرگر و شوێن.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
             )
 
-            if (isOwner && !hasAnyOrdersInSystem) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    modifier = Modifier.padding(top = 6.dp)
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.padding(top = 6.dp)
+            ) {
+                Button(
+                    onClick = onAddNewOrderClick,
+                    colors = ButtonDefaults.buttonColors(containerColor = DxpRoyalPlum),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.testTag("empty_state_add_order_btn")
                 ) {
-                    Button(
-                        onClick = onAddNewOrderClick,
-                        colors = ButtonDefaults.buttonColors(containerColor = DxpRoyalPlum),
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.testTag("empty_state_add_order_btn")
-                    ) {
-                        Icon(imageVector = Icons.Default.Add, contentDescription = null)
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("زیادکردنی وەسڵی نوێ")
-                    }
+                    Icon(imageVector = Icons.Default.Add, contentDescription = null)
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("زیادکردنی کاڵا / وەسڵی نوێ")
+                }
 
+                if (isOwner && !hasAnyOrdersInSystem) {
                     OutlinedButton(
                         onClick = onSeedSampleDataClick,
                         border = BorderStroke(1.dp, DxpAccentViolet),

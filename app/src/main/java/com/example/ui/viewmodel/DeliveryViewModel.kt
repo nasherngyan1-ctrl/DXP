@@ -3,12 +3,11 @@ package com.example.ui.viewmodel
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.data.model.ADMIN_SECRET_CODE
 import com.example.data.model.CashSettlement
 import com.example.data.model.CompanyFinancialKpis
 import com.example.data.model.DeliveryOrder
 import com.example.data.model.DriverFinancialSummary
-import com.example.data.model.MAX_ADMINS_COUNT
-import com.example.data.model.MAX_DRIVERS_COUNT
 import com.example.data.model.OrderStatus
 import com.example.data.model.StaffMember
 import com.example.data.model.StaffRole
@@ -170,7 +169,6 @@ class DeliveryViewModel(
     }
 
     fun switchActiveRole(role: StaffRole) {
-        // Only Admins (OWNER) can switch between Owner and Driver preview modes
         if (_actualUserRole.value == StaffRole.OWNER) {
             _activeViewRole.value = role
         } else {
@@ -178,35 +176,78 @@ class DeliveryViewModel(
         }
     }
 
+    fun unlockAdminWithCode(
+        enteredCode: String,
+        onUnlocked: () -> Unit = {},
+        onInvalidCode: (String) -> Unit = {}
+    ) {
+        val clean = enteredCode.trim().uppercase()
+        if (clean != ADMIN_SECRET_CODE) {
+            onInvalidCode("کۆدەکە هەڵەیە! تکایە کۆدی تایبەتی ئەدمین بنووسە")
+            return
+        }
+        viewModelScope.launch {
+            val res = repository.unlockAdminWithSecretCode(
+                secretCode = clean,
+                defaultName = currentUserDisplayName.ifBlank { "ئەدمینی DXP POST" },
+                defaultEmail = currentUserEmail
+            )
+            res.onSuccess {
+                _actualUserRole.value = StaffRole.OWNER
+                _activeViewRole.value = StaffRole.OWNER
+                _actionMessage.value = "بەشی ئەدمین بە سەرکەوتوویی چالاک کرا ✓"
+                onUnlocked()
+            }.onFailure { err ->
+                onInvalidCode(err.localizedMessage ?: "هەڵە لە چالاککردنی ئەدمین")
+            }
+        }
+    }
+
     fun createNewOrder(
         trackingCode: String,
         senderName: String,
+        senderPhone: String,
         customerName: String,
         customerPhone: String,
         cityArea: String,
         addressDetails: String,
         notes: String,
+        packageImageBase64: String,
         itemPriceIqd: Long,
         deliveryFeeIqd: Long,
         assignedDriverId: String,
         assignedDriverName: String
     ) {
         viewModelScope.launch {
+            // If a Driver is creating a package, ensure it is assigned to their own UID
+            val effectiveDriverId = if (_actualUserRole.value != StaffRole.OWNER) {
+                currentUserId
+            } else {
+                assignedDriverId
+            }
+            val effectiveDriverName = if (_actualUserRole.value != StaffRole.OWNER) {
+                assignedDriverName.ifBlank { currentUserDisplayName.ifBlank { "شۆفێر" } }
+            } else {
+                assignedDriverName
+            }
+
             val result = repository.createOrder(
                 trackingCode = trackingCode,
                 senderName = senderName,
+                senderPhone = senderPhone,
                 customerName = customerName,
                 customerPhone = customerPhone,
                 cityArea = cityArea,
                 addressDetails = addressDetails,
                 notes = notes,
+                packageImageBase64 = packageImageBase64,
                 itemPriceIqd = itemPriceIqd,
                 deliveryFeeIqd = deliveryFeeIqd,
-                assignedDriverId = assignedDriverId,
-                assignedDriverName = assignedDriverName
+                assignedDriverId = effectiveDriverId,
+                assignedDriverName = effectiveDriverName
             )
             result.onSuccess {
-                _actionMessage.value = "وەسڵی نوێ بە سەرکەوتوویی تۆمارکرا"
+                _actionMessage.value = "کاڵا / وەسڵی نوێ بە سەرکەوتوویی تۆمارکرا"
             }.onFailure { err ->
                 _actionMessage.value = "هەڵە: ${err.localizedMessage ?: "تۆمار نەکرا"}"
             }
@@ -256,11 +297,13 @@ class DeliveryViewModel(
     fun updateFullOrder(
         order: DeliveryOrder,
         senderName: String,
+        senderPhone: String,
         customerName: String,
         customerPhone: String,
         cityArea: String,
         addressDetails: String,
         notes: String,
+        packageImageBase64: String,
         itemPriceIqd: Long,
         deliveryFeeIqd: Long,
         assignedDriverId: String,
@@ -273,11 +316,13 @@ class DeliveryViewModel(
             val result = repository.updateFullOrder(
                 orderId = order.id,
                 senderName = senderName,
+                senderPhone = senderPhone,
                 customerName = customerName,
                 customerPhone = customerPhone,
                 cityArea = cityArea,
                 addressDetails = addressDetails,
                 notes = notes,
+                packageImageBase64 = packageImageBase64,
                 itemPriceIqd = itemPriceIqd,
                 deliveryFeeIqd = deliveryFeeIqd,
                 assignedDriverId = assignedDriverId,
@@ -313,27 +358,9 @@ class DeliveryViewModel(
         role: StaffRole,
         vehicleInfo: String,
         active: Boolean = true,
-        existingMember: StaffMember? = null,
-        currentStaffList: List<StaffMember> = emptyList()
+        existingMember: StaffMember? = null
     ) {
         viewModelScope.launch {
-            if (existingMember == null || existingMember.role != role.code) {
-                val currentAdminsCount = currentStaffList.count {
-                    it.role == StaffRole.OWNER.code && it.id != existingMember?.id
-                }
-                val currentDriversCount = currentStaffList.count {
-                    it.role == StaffRole.DRIVER.code && it.id != existingMember?.id
-                }
-                if (role == StaffRole.OWNER && currentAdminsCount >= MAX_ADMINS_COUNT) {
-                    _actionMessage.value = "تەنها $MAX_ADMINS_COUNT ئەدمین ڕێگەپێدراوە لە سیستەمەکەدا"
-                    return@launch
-                }
-                if (role == StaffRole.DRIVER && currentDriversCount >= MAX_DRIVERS_COUNT) {
-                    _actionMessage.value = "تەنها $MAX_DRIVERS_COUNT شۆفێر ڕێگەپێدراوە لە سیستەمەکەدا"
-                    return@launch
-                }
-            }
-
             val result = repository.createOrUpdateStaffMember(
                 staffId = staffId,
                 name = name,
@@ -380,7 +407,7 @@ class DeliveryViewModel(
         viewModelScope.launch {
             val res = repository.seedTwoAdminsAndTenDrivers()
             res.onSuccess {
-                _actionMessage.value = "لیستی تەواوی ٢ ئەدمین و ١٠ شۆفێری DXP POST ئامادە کرا"
+                _actionMessage.value = "لیستی ئەدمین و شۆفێرانی DXP POST ئامادە کرا"
             }.onFailure { err ->
                 _actionMessage.value = "هەڵە لە ئامادەکردنی ستاف: ${err.localizedMessage}"
             }
@@ -394,6 +421,7 @@ class DeliveryViewModel(
             repository.createOrder(
                 trackingCode = "DXP-1081",
                 senderName = "براندی جلوبەرگی شاهانە",
+                senderPhone = "07509988776",
                 customerName = "ژیار عەبدولڕەحمان",
                 customerPhone = "07501122334",
                 cityArea = "هەولێر - بەختیاری",
@@ -408,6 +436,7 @@ class DeliveryViewModel(
             repository.createOrder(
                 trackingCode = "DXP-1082",
                 senderName = "فرۆشگای مۆبایلی داهاتوو",
+                senderPhone = "07708877665",
                 customerName = "هاوژین لەتیف",
                 customerPhone = "07703344556",
                 cityArea = "سلێمانی - تووی مەلیک",
@@ -419,7 +448,7 @@ class DeliveryViewModel(
                 assignedDriverName = "مەندووب ٢ - ئارام کەریم"
             )
 
-            _actionMessage.value = "٢ ئەدمین، ١٠ شۆفێر و نموونەی وەسڵەکانی DXP POST زیادکران"
+            _actionMessage.value = "ئەدمین، شۆفێرەکان و نموونەی وەسڵەکانی DXP POST زیادکران"
         }
     }
 

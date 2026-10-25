@@ -2,6 +2,7 @@ package com.example.data.repository
 
 import android.content.Context
 import com.example.R
+import com.example.data.model.ADMIN_SECRET_CODE
 import com.example.data.model.COMPANY_CODE_DXP
 import com.example.data.model.CashSettlement
 import com.example.data.model.DeliveryOrder
@@ -214,7 +215,7 @@ class DeliveryRepository(
                 .trim()
                 .take(80)
 
-            val payload = mapOf(
+            val payload = mutableMapOf<String, Any>(
                 "ownerUid" to uid,
                 "companyCode" to COMPANY_CODE_DXP,
                 "name" to safeName,
@@ -226,6 +227,9 @@ class DeliveryRepository(
                 "createdAt" to FieldValue.serverTimestamp(),
                 "updatedAt" to FieldValue.serverTimestamp()
             )
+            if (resolvedRole == StaffRole.OWNER.code) {
+                payload["adminCode"] = ADMIN_SECRET_CODE
+            }
             docRef.set(payload).await()
             StaffMember(
                 id = uid,
@@ -235,6 +239,7 @@ class DeliveryRepository(
                 phone = safePhone,
                 email = userEmail.take(120),
                 role = resolvedRole,
+                adminCode = if (resolvedRole == StaffRole.OWNER.code) ADMIN_SECRET_CODE else "",
                 vehicleInfo = safeVehicle,
                 active = true
             )
@@ -242,6 +247,55 @@ class DeliveryRepository(
             throw e
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.WRITE, docRef.path)
+            throw e
+        }
+    }
+
+    // Unlock unlimited Admin (OWNER) access using the secret code DXPPOST
+    suspend fun unlockAdminWithSecretCode(
+        secretCode: String,
+        defaultName: String,
+        defaultEmail: String = ""
+    ): Result<Unit> = runCatching {
+        val cleanCode = secretCode.trim().uppercase()
+        if (cleanCode != ADMIN_SECRET_CODE) {
+            throw IllegalArgumentException("کۆدی نهێنی ئەدمین هەڵەیە! تکایە کۆدی دروست بنووسە.")
+        }
+        val uid = requireUserId()
+        val docRef = db.collection("staff").document(uid)
+        try {
+            val existingSnap = docRef.get().await()
+            if (existingSnap.exists()) {
+                docRef.update(
+                    mapOf(
+                        "role" to StaffRole.OWNER.code,
+                        "adminCode" to ADMIN_SECRET_CODE,
+                        "active" to true,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            } else {
+                val safeName = defaultName.trim().ifBlank { "ئەدمینی DXP POST" }.take(80)
+                docRef.set(
+                    mapOf(
+                        "ownerUid" to uid,
+                        "companyCode" to COMPANY_CODE_DXP,
+                        "name" to safeName,
+                        "phone" to "",
+                        "email" to defaultEmail.trim().take(120),
+                        "role" to StaffRole.OWNER.code,
+                        "adminCode" to ADMIN_SECRET_CODE,
+                        "vehicleInfo" to "بەڕێوەبەرایەتی DXP POST",
+                        "active" to true,
+                        "createdAt" to FieldValue.serverTimestamp(),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, docRef.path)
             throw e
         }
     }
@@ -263,7 +317,7 @@ class DeliveryRepository(
         val docRef = db.collection("staff").document(resolvedId)
         try {
             if (existingMember == null) {
-                val payload = mapOf(
+                val payload = mutableMapOf<String, Any>(
                     "ownerUid" to uid,
                     "companyCode" to COMPANY_CODE_DXP,
                     "name" to name.trim().ifBlank { "شۆفێری DXP" }.take(80),
@@ -275,9 +329,12 @@ class DeliveryRepository(
                     "createdAt" to FieldValue.serverTimestamp(),
                     "updatedAt" to FieldValue.serverTimestamp()
                 )
+                if (role == StaffRole.OWNER.code) {
+                    payload["adminCode"] = ADMIN_SECRET_CODE
+                }
                 docRef.set(payload).await()
             } else {
-                val updates = mapOf(
+                val updates = mutableMapOf<String, Any>(
                     "name" to name.trim().ifBlank { existingMember.name }.take(80),
                     "phone" to phone.trim().take(30),
                     "email" to email.trim().take(120),
@@ -286,6 +343,9 @@ class DeliveryRepository(
                     "active" to active,
                     "updatedAt" to FieldValue.serverTimestamp()
                 )
+                if (role == StaffRole.OWNER.code) {
+                    updates["adminCode"] = ADMIN_SECRET_CODE
+                }
                 docRef.update(updates).await()
             }
             resolvedId
@@ -304,11 +364,13 @@ class DeliveryRepository(
     suspend fun createOrder(
         trackingCode: String,
         senderName: String,
+        senderPhone: String = "",
         customerName: String,
         customerPhone: String,
         cityArea: String,
         addressDetails: String,
         notes: String,
+        packageImageBase64: String = "",
         itemPriceIqd: Long,
         deliveryFeeIqd: Long,
         assignedDriverId: String = "",
@@ -334,11 +396,13 @@ class DeliveryRepository(
             "companyCode" to COMPANY_CODE_DXP,
             "trackingCode" to code,
             "senderName" to senderName.trim().take(80),
+            "senderPhone" to senderPhone.trim().take(30),
             "customerName" to customerName.trim().take(80),
             "customerPhone" to customerPhone.trim().take(30),
             "cityArea" to cityArea.trim().take(80),
             "addressDetails" to addressDetails.trim().take(250),
             "notes" to notes.trim().take(300),
+            "packageImageBase64" to packageImageBase64.trim().take(340000),
             "itemPriceIqd" to cleanItemPrice,
             "deliveryFeeIqd" to cleanDeliveryFee,
             "totalAmountIqd" to totalAmount,
@@ -417,11 +481,13 @@ class DeliveryRepository(
     suspend fun updateFullOrder(
         orderId: String,
         senderName: String,
+        senderPhone: String = "",
         customerName: String,
         customerPhone: String,
         cityArea: String,
         addressDetails: String,
         notes: String,
+        packageImageBase64: String = "",
         itemPriceIqd: Long,
         deliveryFeeIqd: Long,
         assignedDriverId: String,
@@ -436,11 +502,13 @@ class DeliveryRepository(
         val cleanDeliveryFee = deliveryFeeIqd.coerceAtLeast(0L)
         val updates = mapOf(
             "senderName" to senderName.trim().take(80),
+            "senderPhone" to senderPhone.trim().take(30),
             "customerName" to customerName.trim().take(80),
             "customerPhone" to customerPhone.trim().take(30),
             "cityArea" to cityArea.trim().take(80),
             "addressDetails" to addressDetails.trim().take(250),
             "notes" to notes.trim().take(300),
+            "packageImageBase64" to packageImageBase64.trim().take(340000),
             "itemPriceIqd" to cleanItemPrice,
             "deliveryFeeIqd" to cleanDeliveryFee,
             "totalAmountIqd" to (cleanItemPrice + cleanDeliveryFee),
@@ -519,7 +587,6 @@ class DeliveryRepository(
         val batch = db.batch()
         var createdCount = 0
 
-        // Second Admin (Admin 1 is the logged-in primary owner at /staff/{uid})
         val admin2Ref = db.collection("staff").document("admin_dxp_2")
         batch.set(
             admin2Ref,
@@ -530,6 +597,7 @@ class DeliveryRepository(
                 "phone" to "07501000002",
                 "email" to "admin2@dxppost.com",
                 "role" to StaffRole.OWNER.code,
+                "adminCode" to ADMIN_SECRET_CODE,
                 "vehicleInfo" to "بەڕێوەبەرایەتی سەرەکی DXP POST",
                 "active" to true,
                 "createdAt" to FieldValue.serverTimestamp(),

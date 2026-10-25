@@ -2,7 +2,7 @@
   "entities": {
     "StaffMember": {
       "title": "StaffMember",
-      "description": "Represents one of the 2 Admins (OWNER) or 10 Delivery Drivers (DRIVER) in DXP POST.",
+      "description": "Represents an Admin (OWNER, unlimited count via secret code DXPPOST) or Delivery Driver (DRIVER) in DXP POST.",
       "type": "object",
       "properties": {
         "ownerUid": {
@@ -29,7 +29,11 @@
         "role": {
           "type": "string",
           "enum": ["OWNER", "DRIVER"],
-          "description": "Role within DXP POST: OWNER (Admin, max 2) or DRIVER (Delivery driver, max 10)."
+          "description": "Role within DXP POST: OWNER (Admin, unlimited) or DRIVER (Delivery driver)."
+        },
+        "adminCode": {
+          "type": "string",
+          "description": "Optional special admin authorization code (DXPPOST) used to unlock OWNER role."
         },
         "vehicleInfo": {
           "type": "string",
@@ -64,12 +68,12 @@
     },
     "DeliveryOrder": {
       "title": "DeliveryOrder",
-      "description": "Represents a commercial package delivery order (wasl) in DXP POST.",
+      "description": "Represents a commercial package delivery order (wasl) in DXP POST, created by either a Driver or an Admin.",
       "type": "object",
       "properties": {
         "ownerUid": {
           "type": "string",
-          "description": "Firebase Auth UID of the admin who created the order."
+          "description": "Firebase Auth UID of the driver or admin who created the order."
         },
         "companyCode": {
           "type": "string",
@@ -84,25 +88,33 @@
           "type": "string",
           "description": "Merchant, store, or sender name."
         },
+        "senderPhone": {
+          "type": "string",
+          "description": "Phone number of the person/sender who sent the package."
+        },
         "customerName": {
           "type": "string",
           "description": "Recipient customer name."
         },
         "customerPhone": {
           "type": "string",
-          "description": "Recipient customer phone number."
+          "description": "Phone number of the recipient customer receiving the package."
         },
         "cityArea": {
           "type": "string",
-          "description": "City and neighborhood/district."
+          "description": "City and neighborhood/district (location)."
         },
         "addressDetails": {
           "type": "string",
-          "description": "Detailed street/landmark delivery address."
+          "description": "Detailed street/landmark delivery location."
         },
         "notes": {
           "type": "string",
           "description": "Special delivery notes or instructions."
+        },
+        "packageImageBase64": {
+          "type": "string",
+          "description": "Optional compressed JPEG Base64 image of the package."
         },
         "itemPriceIqd": {
           "type": "integer",
@@ -127,7 +139,7 @@
         },
         "assignedDriverId": {
           "type": "string",
-          "description": "Firebase Auth UID / Staff ID of the assigned driver (empty if unassigned)."
+          "description": "Firebase Auth UID / Staff ID of the assigned driver."
         },
         "assignedDriverName": {
           "type": "string",
@@ -241,7 +253,7 @@
   "firestore": {
     "/staff/{staffId}": {
       "schema": "StaffMember",
-      "description": "Collection of DXP POST staff members (2 admins and 10 delivery drivers)."
+      "description": "Collection of DXP POST staff members (unlimited admins via code DXPPOST and delivery drivers)."
     },
     "/orders/{orderId}": {
       "schema": "DeliveryOrder",

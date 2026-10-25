@@ -15,9 +15,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.DirectionsBike
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.DirectionsBike
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.CircularProgressIndicator
@@ -63,6 +63,7 @@ import com.example.ui.auth.signOut
 import com.example.ui.components.DxpTopHeader
 import com.example.ui.screens.AccountingScreen
 import com.example.ui.screens.AddOrEditStaffDialog
+import com.example.ui.screens.AdminSecretCodeDialog
 import com.example.ui.screens.CreateOrEditOrderDialog
 import com.example.ui.screens.DriversManagementScreen
 import com.example.ui.screens.OrdersScreen
@@ -106,7 +107,7 @@ internal fun FirebaseAuth.authStateFlow(): Flow<FirebaseUser?> = callbackFlow {
 enum class DxpTab(val title: String, val icon: ImageVector, val testTag: String) {
     ORDERS("وەسڵەکان", Icons.Default.Inventory2, "nav_tab_orders"),
     ACCOUNTING("ژمێریاری", Icons.Default.AccountBalanceWallet, "nav_tab_accounting"),
-    DRIVERS("شۆفێرەکان", Icons.Default.DirectionsBike, "nav_tab_drivers"),
+    DRIVERS("شۆفێرەکان", Icons.AutoMirrored.Filled.DirectionsBike, "nav_tab_drivers"),
     PROFILE("هەژمارەکەم", Icons.Default.Person, "nav_tab_profile")
 }
 
@@ -169,6 +170,7 @@ fun DxpMainWorkspace(
     var orderToEdit by remember { mutableStateOf<DeliveryOrder?>(null) }
     var showAddStaffDialog by remember { mutableStateOf(false) }
     var staffMemberToEdit by remember { mutableStateOf<StaffMember?>(null) }
+    var showAdminSecretCodeDialog by remember { mutableStateOf(false) }
 
     // BackHandler on secondary tabs returns to ORDERS home tab
     BackHandler(enabled = currentTab != DxpTab.ORDERS) {
@@ -203,18 +205,19 @@ fun DxpMainWorkspace(
                     activeRole = activeRole,
                     canSwitchRole = actualRole == StaffRole.OWNER,
                     onSwitchRole = { viewModel.switchActiveRole(it) },
+                    onRequestAdminCode = { showAdminSecretCodeDialog = true },
                     userName = currentUserDisplayName
                 )
             }
         },
         floatingActionButton = {
-            if (currentTab == DxpTab.ORDERS && activeRole == StaffRole.OWNER) {
+            if (currentTab == DxpTab.ORDERS) {
                 ExtendedFloatingActionButton(
                     onClick = { showCreateOrderDialog = true },
                     containerColor = DxpRoyalPlum,
                     contentColor = Color.White,
                     icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                    text = { Text("زیادکردنی وەسڵ") },
+                    text = { Text("زیادکردنی کاڵا / وەسڵ") },
                     modifier = Modifier.testTag("fab_add_order")
                 )
             }
@@ -327,6 +330,7 @@ fun DxpMainWorkspace(
                             activeRole = activeRole,
                             canSwitchRole = actualRole == StaffRole.OWNER,
                             onSwitchRole = { viewModel.switchActiveRole(it) },
+                            onRequestAdminCode = { showAdminSecretCodeDialog = true },
                             onEditOwnProfile = { member -> staffMemberToEdit = member },
                             onSignOutClick = {
                                 val credManager = CredentialManager.create(context)
@@ -344,21 +348,39 @@ fun DxpMainWorkspace(
         }
     }
 
+    if (showAdminSecretCodeDialog) {
+        AdminSecretCodeDialog(
+            onDismiss = { showAdminSecretCodeDialog = false },
+            onUnlockWithCode = { code, onError ->
+                viewModel.unlockAdminWithCode(
+                    enteredCode = code,
+                    onUnlocked = { showAdminSecretCodeDialog = false },
+                    onInvalidCode = { err -> onError(err) }
+                )
+            }
+        )
+    }
+
     if (showCreateOrderDialog) {
         CreateOrEditOrderDialog(
             existingOrder = null,
             drivers = drivers,
+            currentUserId = currentUserId,
+            currentUserDisplayName = currentUserDisplayName,
+            isOwnerView = activeRole == StaffRole.OWNER,
             onDismiss = { showCreateOrderDialog = false },
-            onSave = { code, sender, customer, phone, city, address, notes, itemPrice, fee, drvId, drvName, _, _, _ ->
+            onSave = { code, sender, senderPhone, customer, phone, city, address, notes, packageImg, itemPrice, fee, drvId, drvName, _, _, _ ->
                 showCreateOrderDialog = false
                 viewModel.createNewOrder(
                     trackingCode = code,
                     senderName = sender,
+                    senderPhone = senderPhone,
                     customerName = customer,
                     customerPhone = phone,
                     cityArea = city,
                     addressDetails = address,
                     notes = notes,
+                    packageImageBase64 = packageImg,
                     itemPriceIqd = itemPrice,
                     deliveryFeeIqd = fee,
                     assignedDriverId = drvId,
@@ -373,17 +395,22 @@ fun DxpMainWorkspace(
         CreateOrEditOrderDialog(
             existingOrder = editing,
             drivers = drivers,
+            currentUserId = currentUserId,
+            currentUserDisplayName = currentUserDisplayName,
+            isOwnerView = activeRole == StaffRole.OWNER,
             onDismiss = { orderToEdit = null },
-            onSave = { _, sender, customer, phone, city, address, notes, itemPrice, fee, drvId, drvName, status, returnReason, isSettled ->
+            onSave = { _, sender, senderPhone, customer, phone, city, address, notes, packageImg, itemPrice, fee, drvId, drvName, status, returnReason, isSettled ->
                 orderToEdit = null
                 viewModel.updateFullOrder(
                     order = editing,
                     senderName = sender,
+                    senderPhone = senderPhone,
                     customerName = customer,
                     customerPhone = phone,
                     cityArea = city,
                     addressDetails = address,
                     notes = notes,
+                    packageImageBase64 = packageImg,
                     itemPriceIqd = itemPrice,
                     deliveryFeeIqd = fee,
                     assignedDriverId = drvId,

@@ -51,6 +51,10 @@ service cloud.firestore {
         (isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)));
     }
 
+    function hasValidAdminSecretCode(data) {
+      return 'adminCode' in data && data.adminCode is string && data.adminCode == 'DXPPOST';
+    }
+
     // 3. Schema Validation Blueprints
     function isValidStaffMember(data) {
       return data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
@@ -58,6 +62,7 @@ service cloud.firestore {
              data.name is string && data.name.size() >= 1 && data.name.size() <= 80 &&
              data.phone is string && data.phone.size() <= 30 &&
              (!('email' in data) || (data.email is string && data.email.size() <= 120)) &&
+             (!('adminCode' in data) || (data.adminCode is string && data.adminCode.size() <= 30)) &&
              data.role is string && (data.role == 'OWNER' || data.role == 'DRIVER') &&
              data.vehicleInfo is string && data.vehicleInfo.size() <= 80 &&
              data.active is bool &&
@@ -70,11 +75,13 @@ service cloud.firestore {
              data.companyCode is string && data.companyCode == 'DXP_POST' &&
              data.trackingCode is string && data.trackingCode.size() >= 1 && data.trackingCode.size() <= 40 &&
              data.senderName is string && data.senderName.size() <= 80 &&
+             (!('senderPhone' in data) || (data.senderPhone is string && data.senderPhone.size() <= 30)) &&
              data.customerName is string && data.customerName.size() >= 1 && data.customerName.size() <= 80 &&
              data.customerPhone is string && data.customerPhone.size() >= 1 && data.customerPhone.size() <= 30 &&
              data.cityArea is string && data.cityArea.size() >= 1 && data.cityArea.size() <= 80 &&
              data.addressDetails is string && data.addressDetails.size() <= 250 &&
              data.notes is string && data.notes.size() <= 300 &&
+             (!('packageImageBase64' in data) || (data.packageImageBase64 is string && data.packageImageBase64.size() <= 350000)) &&
              data.itemPriceIqd is int && data.itemPriceIqd >= 0 && data.itemPriceIqd <= 1000000000 &&
              data.deliveryFeeIqd is int && data.deliveryFeeIqd >= 0 && data.deliveryFeeIqd <= 100000000 &&
              data.totalAmountIqd is int && data.totalAmountIqd >= 0 && data.totalAmountIqd <= 1100000000 &&
@@ -103,7 +110,7 @@ service cloud.firestore {
              data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
 
-    // 4. Collection: /staff/{staffId} (2 Admins & 10 Drivers)
+    // 4. Collection: /staff/{staffId} (Unlimited Admins via DXPPOST code & Delivery Drivers)
     match /staff/{staffId} {
       allow get: if isSignedIn() && isValidId(staffId) && (
         staffId == request.auth.uid ||
@@ -124,12 +131,13 @@ service cloud.firestore {
         ]) &&
         incoming().keys().hasOnly([
           'ownerUid', 'companyCode', 'name', 'phone', 'email', 'role',
-          'vehicleInfo', 'active', 'createdAt', 'updatedAt'
+          'adminCode', 'vehicleInfo', 'active', 'createdAt', 'updatedAt'
         ]) &&
         isValidStaffMember(incoming()) &&
         incoming().ownerUid == request.auth.uid && (
-          // Self-registration as DRIVER, or Admin creating any staff member (OWNER/DRIVER)
+          // Self-registration as DRIVER, or unlocking OWNER with secret code DXPPOST, or Admin creating staff
           (staffId == request.auth.uid && incoming().role == 'DRIVER') ||
+          (staffId == request.auth.uid && incoming().role == 'OWNER' && hasValidAdminSecretCode(incoming())) ||
           isAdmin()
         );
 
@@ -138,18 +146,26 @@ service cloud.firestore {
         isValidStaffMember(incoming()) &&
         incoming().keys().hasOnly([
           'ownerUid', 'companyCode', 'name', 'phone', 'email', 'role',
-          'vehicleInfo', 'active', 'createdAt', 'updatedAt'
+          'adminCode', 'vehicleInfo', 'active', 'createdAt', 'updatedAt'
         ]) &&
         incoming().ownerUid == existing().ownerUid &&
         incoming().companyCode == existing().companyCode &&
         incoming().createdAt == existing().createdAt && (
-          // Action 1: Admin can manage all staff fields including role and active status
+          // Action 1: Admin can manage all staff fields
           (isAdmin() &&
             incoming().diff(existing()).affectedKeys().hasOnly([
-              'name', 'phone', 'email', 'role', 'vehicleInfo', 'active', 'updatedAt'
+              'name', 'phone', 'email', 'role', 'adminCode', 'vehicleInfo', 'active', 'updatedAt'
             ])
           ) ||
-          // Action 2: Driver can only update own contact/vehicle info, cannot escalate role or active flag
+          // Action 2: Any user can unlock OWNER role on their own profile by supplying adminCode == 'DXPPOST'
+          (staffId == request.auth.uid &&
+            incoming().role == 'OWNER' &&
+            hasValidAdminSecretCode(incoming()) &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'name', 'phone', 'email', 'role', 'adminCode', 'vehicleInfo', 'active', 'updatedAt'
+            ])
+          ) ||
+          // Action 3: Driver can update own contact/vehicle info, cannot escalate role without DXPPOST code
           (staffId == request.auth.uid &&
             incoming().role == existing().role &&
             incoming().active == existing().active &&
@@ -178,7 +194,7 @@ service cloud.firestore {
         (existing().companyCode == 'DXP_POST' && isAdmin())
       );
 
-      // Only Admins can create orders and assign drivers
+      // Both Admins AND Drivers can create orders/packages (with photo, senderPhone, customerPhone, location)
       allow create: if isSignedIn() &&
         isValidId(orderId) &&
         incoming().keys().hasAll([
@@ -189,23 +205,26 @@ service cloud.firestore {
           'isSettled', 'createdAt', 'updatedAt'
         ]) &&
         incoming().keys().hasOnly([
-          'ownerUid', 'companyCode', 'trackingCode', 'senderName',
+          'ownerUid', 'companyCode', 'trackingCode', 'senderName', 'senderPhone',
           'customerName', 'customerPhone', 'cityArea', 'addressDetails',
-          'notes', 'itemPriceIqd', 'deliveryFeeIqd', 'totalAmountIqd',
+          'notes', 'packageImageBase64', 'itemPriceIqd', 'deliveryFeeIqd', 'totalAmountIqd',
           'status', 'returnReason', 'assignedDriverId', 'assignedDriverName',
           'isSettled', 'createdAt', 'updatedAt'
         ]) &&
         isValidDeliveryOrder(incoming()) &&
         incoming().ownerUid == request.auth.uid &&
-        isAdmin();
+        incoming().isSettled == false && (
+          isAdmin() ||
+          incoming().assignedDriverId == request.auth.uid
+        );
 
       allow update: if isSignedIn() &&
         isValidId(orderId) &&
         isValidDeliveryOrder(incoming()) &&
         incoming().keys().hasOnly([
-          'ownerUid', 'companyCode', 'trackingCode', 'senderName',
+          'ownerUid', 'companyCode', 'trackingCode', 'senderName', 'senderPhone',
           'customerName', 'customerPhone', 'cityArea', 'addressDetails',
-          'notes', 'itemPriceIqd', 'deliveryFeeIqd', 'totalAmountIqd',
+          'notes', 'packageImageBase64', 'itemPriceIqd', 'deliveryFeeIqd', 'totalAmountIqd',
           'status', 'returnReason', 'assignedDriverId', 'assignedDriverName',
           'isSettled', 'createdAt', 'updatedAt'
         ]) &&
@@ -216,14 +235,14 @@ service cloud.firestore {
           // Action 1: Admin full order management, driver assignment & accounting settlement
           (isAdmin() &&
             incoming().diff(existing()).affectedKeys().hasOnly([
-              'senderName', 'customerName', 'customerPhone', 'cityArea',
-              'addressDetails', 'notes', 'itemPriceIqd', 'deliveryFeeIqd',
+              'senderName', 'senderPhone', 'customerName', 'customerPhone', 'cityArea',
+              'addressDetails', 'notes', 'packageImageBase64', 'itemPriceIqd', 'deliveryFeeIqd',
               'totalAmountIqd', 'status', 'returnReason', 'assignedDriverId',
               'assignedDriverName', 'isSettled', 'updatedAt'
             ])
           ) ||
-          // Action 2: Assigned Driver can only update delivery status & returnReason on unsettled orders
-          (existing().assignedDriverId == request.auth.uid &&
+          // Action 2: Assigned Driver can update delivery status, returnReason, or package photo on unsettled orders
+          ((existing().assignedDriverId == request.auth.uid || existing().ownerUid == request.auth.uid) &&
             existing().isSettled == false &&
             incoming().isSettled == false &&
             incoming().assignedDriverId == existing().assignedDriverId &&
@@ -232,7 +251,7 @@ service cloud.firestore {
             incoming().deliveryFeeIqd == existing().deliveryFeeIqd &&
             incoming().totalAmountIqd == existing().totalAmountIqd &&
             incoming().diff(existing()).affectedKeys().hasOnly([
-              'status', 'returnReason', 'updatedAt'
+              'status', 'returnReason', 'packageImageBase64', 'notes', 'updatedAt'
             ])
           )
         );

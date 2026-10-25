@@ -2,6 +2,7 @@ package com.example.data.repository
 
 import com.example.base.FirestoreEmulatorTestBase
 import com.example.data.model.OrderStatus
+import com.example.data.model.StaffRole
 import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -14,32 +15,70 @@ import org.junit.Test
 class DeliveryRepositoryRuleTest : FirestoreEmulatorTestBase() {
 
     @Test
-    fun admin_createOrder_and_observeCompanyOrders_emitsRealtimeOrder() = runBlocking {
-        signInTestUser("owner@dxppost.com")
-        val repository = DeliveryRepository(firestore, auth)
+    fun driver_canCreatePackageWithPhotoAndSenderReceiverPhones_and_observeRealtime() = runBlocking {
+        val driverUid = signInTestUser("driver_creator@dxppost.com")
+        val driverRepo = DeliveryRepository(firestore, auth)
 
         val createResult = withTimeout(DEFAULT_TIMEOUT_MS) {
-            repository.createOrder(
-                trackingCode = "DXP-5001",
+            driverRepo.createOrder(
+                trackingCode = "DXP-DRV-901",
                 senderName = "فرۆشگای هەولێر",
+                senderPhone = "07508889900",
                 customerName = "کاروان محەمەد",
                 customerPhone = "07501234567",
                 cityArea = "هەولێر - شۆڕش",
                 addressDetails = "شەقامی چل مەتری",
                 notes = "پێش چوون تەلەفۆن بکە",
+                packageImageBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
                 itemPriceIqd = 35000L,
-                deliveryFeeIqd = 4000L
+                deliveryFeeIqd = 4000L,
+                assignedDriverId = driverUid,
+                assignedDriverName = "شۆفێر کاروان"
             )
         }
-        assertTrue(createResult.isSuccess)
+        assertTrue("Driver createOrder failed: ${createResult.exceptionOrNull()}", createResult.isSuccess)
         val orderId = createResult.getOrThrow()
 
         val orders = withTimeout(FLOW_TIMEOUT_MS) {
-            repository.observeCompanyOrders().first { list -> list.any { it.id == orderId } }
+            driverRepo.observeDriverOrders(driverUid).first { list -> list.any { it.id == orderId } }
         }
         val created = orders.first { it.id == orderId }
-        assertEquals("DXP-5001", created.trackingCode)
+        assertEquals("DXP-DRV-901", created.trackingCode)
+        assertEquals("07508889900", created.senderPhone)
+        assertEquals("07501234567", created.customerPhone)
+        assertTrue(created.packageImageBase64.isNotBlank())
         assertEquals(39000L, created.totalAmountIqd)
+    }
+
+    @Test
+    fun user_canUnlockUnlimitedAdminRole_withSecretCode_DXPPOST() = runBlocking {
+        val newAdminUid = signInTestUser("new_unlimited_admin@dxppost.com")
+        val repo = DeliveryRepository(firestore, auth)
+
+        // First create default DRIVER profile
+        withTimeout(DEFAULT_TIMEOUT_MS) {
+            repo.ensureCurrentUserProfile(
+                defaultName = "ئەدمینی نوێ",
+                defaultEmail = "new_unlimited_admin@dxppost.com"
+            ).getOrThrow()
+        }
+
+        // Wrong code fails
+        val wrongResult = withTimeout(DEFAULT_TIMEOUT_MS) {
+            repo.unlockAdminWithSecretCode("WRONGCODE", "ئەدمینی نوێ")
+        }
+        assertTrue(wrongResult.isFailure)
+
+        // Correct DXPPOST code unlocks OWNER role in Firestore
+        val unlockResult = withTimeout(DEFAULT_TIMEOUT_MS) {
+            repo.unlockAdminWithSecretCode("DXPPOST", "ئەدمینی نوێ", "new_unlimited_admin@dxppost.com")
+        }
+        assertTrue("Unlock with DXPPOST failed: ${unlockResult.exceptionOrNull()}", unlockResult.isSuccess)
+
+        val staffList = withTimeout(FLOW_TIMEOUT_MS) {
+            repo.observeCompanyStaff().first { list -> list.any { it.id == newAdminUid && it.role == StaffRole.OWNER.code } }
+        }
+        assertTrue(staffList.any { it.id == newAdminUid && it.role == StaffRole.OWNER.code })
     }
 
     @Test
@@ -52,6 +91,7 @@ class DeliveryRepositoryRuleTest : FirestoreEmulatorTestBase() {
             ownerRepo.createOrder(
                 trackingCode = "DXP-5002",
                 senderName = "بازاڕی سلێمانی",
+                senderPhone = "07709991122",
                 customerName = "ئارام عەلی",
                 customerPhone = "07701234567",
                 cityArea = "سلێمانی - سەرچنار",
@@ -64,7 +104,6 @@ class DeliveryRepositoryRuleTest : FirestoreEmulatorTestBase() {
             ).getOrThrow()
         }
 
-        // Switch to assigned driver
         signInTestUser("driver1@dxppost.com")
         val driverRepo = DeliveryRepository(firestore, auth)
 
@@ -85,32 +124,6 @@ class DeliveryRepositoryRuleTest : FirestoreEmulatorTestBase() {
     }
 
     @Test
-    fun driver_cannotCreateOrder_or_settleAccounting_failsWithPermissionDenied() = runBlocking {
-        val driverUid = signInTestUser("driver3@dxppost.com")
-        val driverRepo = DeliveryRepository(firestore, auth)
-
-        val createAttempt = withTimeout(DEFAULT_TIMEOUT_MS) {
-            driverRepo.createOrder(
-                trackingCode = "DXP-HACK",
-                senderName = "Test",
-                customerName = "Customer",
-                customerPhone = "07501112233",
-                cityArea = "Erbil",
-                addressDetails = "Center",
-                notes = "",
-                itemPriceIqd = 10000L,
-                deliveryFeeIqd = 3000L,
-                assignedDriverId = driverUid,
-                assignedDriverName = "Driver"
-            )
-        }
-        assertTrue(createAttempt.isFailure)
-        val createEx = createAttempt.exceptionOrNull()?.unwrapFirestoreException()
-        assertNotNull(createEx)
-        assertEquals(FirebaseFirestoreException.Code.PERMISSION_DENIED, createEx?.code)
-    }
-
-    @Test
     fun admin_settleDriverOrders_marksOrdersSettled_and_createsSettlementRecord() = runBlocking {
         val driverUid = signInTestUser("driver4@dxppost.com")
         signInTestUser("admin1@dxppost.com")
@@ -120,6 +133,7 @@ class DeliveryRepositoryRuleTest : FirestoreEmulatorTestBase() {
             adminRepo.createOrder(
                 trackingCode = "DXP-5004",
                 senderName = "فرۆشگای دهۆک",
+                senderPhone = "07507778899",
                 customerName = "ژیار",
                 customerPhone = "07503334455",
                 cityArea = "دهۆک",
@@ -166,6 +180,7 @@ class DeliveryRepositoryRuleTest : FirestoreEmulatorTestBase() {
             ownerRepo.createOrder(
                 trackingCode = "DXP-5003",
                 senderName = "فرۆشگا",
+                senderPhone = "07501112233",
                 customerName = "سارا",
                 customerPhone = "07509998877",
                 cityArea = "دهۆک",
@@ -178,7 +193,6 @@ class DeliveryRepositoryRuleTest : FirestoreEmulatorTestBase() {
             ).getOrThrow()
         }
 
-        // Sign in as a stranger who is neither the owner nor the assigned driver
         signInTestUser("stranger@dxppost.com")
         val strangerRepo = DeliveryRepository(firestore, auth)
         val result = withTimeout(DEFAULT_TIMEOUT_MS) {

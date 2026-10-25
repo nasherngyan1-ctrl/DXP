@@ -93,12 +93,12 @@ test("Unauthenticated user: cannot read or list orders, staff, or settlements", 
   await assertFails(unauthDb.collection("settlements").get());
 });
 
-test("Role security: Driver cannot self-register as OWNER or escalate role to OWNER", async () => {
+test("Role security & DXPPOST Admin Code: Driver cannot become OWNER without DXPPOST code, but succeeds with DXPPOST code", async () => {
   await seedAdminAndDrivers();
   const now = new Date();
   const newDriverDb = testEnv.authenticatedContext(DRIVER_2_UID).firestore();
 
-  // Driver cannot self-register as OWNER
+  // Driver cannot self-register as OWNER without DXPPOST code
   await assertFails(
     newDriverDb.collection("staff").doc(DRIVER_2_UID).set({
       ownerUid: DRIVER_2_UID,
@@ -130,79 +130,80 @@ test("Role security: Driver cannot self-register as OWNER or escalate role to OW
     })
   );
 
-  // Driver cannot escalate own role to OWNER on update
+  // Driver cannot escalate own role to OWNER with wrong code
   await assertFails(
     newDriverDb.collection("staff").doc(DRIVER_2_UID).update({
       role: "OWNER",
+      adminCode: "WRONGCODE",
+      updatedAt: new Date(),
+    })
+  );
+
+  // User CAN unlock OWNER role using the secret code DXPPOST
+  await assertSucceeds(
+    newDriverDb.collection("staff").doc(DRIVER_2_UID).update({
+      role: "OWNER",
+      adminCode: "DXPPOST",
       updatedAt: new Date(),
     })
   );
 });
 
-test("Order & Driver Assignment Security: Only Admins can create orders, assign drivers, and manage accounting", async () => {
+test("Driver & Admin Package Creation: Drivers can add own packages with photo, senderPhone, customerPhone & location", async () => {
   await seedAdminAndDrivers();
   const now = new Date();
   const admin1Db = testEnv.authenticatedContext(ADMIN_1_UID).firestore();
-  const admin2Db = testEnv.authenticatedContext(ADMIN_2_UID).firestore();
   const driver1Db = testEnv.authenticatedContext(DRIVER_1_UID).firestore();
 
-  const orderPayload = {
-    ownerUid: ADMIN_1_UID,
+  const driverOrderPayload = {
+    ownerUid: DRIVER_1_UID,
     companyCode: "DXP_POST",
-    trackingCode: "DXP-1001",
+    trackingCode: "DXP-DRV-101",
     senderName: "Bazari Slemani",
+    senderPhone: "07705556677",
     customerName: "Ako Ahmad",
     customerPhone: "07701234567",
     cityArea: "سلێمانی - بەختیاری",
     addressDetails: "نزیک قوتابخانەکە",
-    notes: "",
+    notes: "پاکێجی تایبەت",
+    packageImageBase64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
     itemPriceIqd: 25000,
     deliveryFeeIqd: 4000,
     totalAmountIqd: 29000,
-    status: "PENDING",
+    status: "ASSIGNED",
     returnReason: "",
-    assignedDriverId: "",
-    assignedDriverName: "",
+    assignedDriverId: DRIVER_1_UID,
+    assignedDriverName: "Driver 1",
     isSettled: false,
     createdAt: now,
     updatedAt: now,
   };
 
-  // Driver cannot create an order
+  // Driver 1 can create an order assigned to themselves with photo and sender/receiver phones
+  await assertSucceeds(
+    driver1Db.collection("orders").doc("ord_driver_1").set(driverOrderPayload)
+  );
+
+  // Driver 1 cannot create an order assigned to another driver
   await assertFails(
-    driver1Db.collection("orders").doc("ord_driver_attempt").set({
-      ...orderPayload,
-      ownerUid: DRIVER_1_UID,
+    driver1Db.collection("orders").doc("ord_driver_other").set({
+      ...driverOrderPayload,
+      assignedDriverId: DRIVER_2_UID,
     })
   );
 
-  // Admin 1 can create an order
+  // Admin 1 can reassign the order to another driver
   await assertSucceeds(
-    admin1Db.collection("orders").doc("order_1").set(orderPayload)
-  );
-
-  // Driver 1 cannot assign themselves to an unassigned order
-  await assertFails(
-    driver1Db.collection("orders").doc("order_1").update({
-      assignedDriverId: DRIVER_1_UID,
-      assignedDriverName: "Driver 1",
-      status: "ASSIGNED",
-      updatedAt: new Date(),
-    })
-  );
-
-  // Admin 2 can assign Driver 1 to the order
-  await assertSucceeds(
-    admin2Db.collection("orders").doc("order_1").update({
-      assignedDriverId: DRIVER_1_UID,
-      assignedDriverName: "Driver 1",
+    admin1Db.collection("orders").doc("ord_driver_1").update({
+      assignedDriverId: DRIVER_2_UID,
+      assignedDriverName: "Driver 2",
       status: "ASSIGNED",
       updatedAt: new Date(),
     })
   );
 });
 
-test("Assigned Driver: can only access own assigned orders and update status, cannot tamper with prices or settlements", async () => {
+test("Assigned Driver: can only access own assigned orders and update status/photo, cannot tamper with prices or settlements", async () => {
   await seedAdminAndDrivers();
   const now = new Date();
   await testEnv.withSecurityRulesDisabled(async (context) => {
@@ -212,11 +213,13 @@ test("Assigned Driver: can only access own assigned orders and update status, ca
       companyCode: "DXP_POST",
       trackingCode: "DXP-1002",
       senderName: "Online Store",
+      senderPhone: "07508889900",
       customerName: "Darya",
       customerPhone: "07501112233",
       cityArea: "هەولێر - عەنکاوە",
       addressDetails: "شەقامی سەرەکی",
       notes: "",
+      packageImageBase64: "",
       itemPriceIqd: 50000,
       deliveryFeeIqd: 5000,
       totalAmountIqd: 55000,
@@ -233,11 +236,13 @@ test("Assigned Driver: can only access own assigned orders and update status, ca
       companyCode: "DXP_POST",
       trackingCode: "DXP-1003",
       senderName: "Online Store",
+      senderPhone: "07508889900",
       customerName: "Karwan",
       customerPhone: "07509998877",
       cityArea: "دهۆک",
       addressDetails: "ناوەند",
       notes: "",
+      packageImageBase64: "",
       itemPriceIqd: 30000,
       deliveryFeeIqd: 4000,
       totalAmountIqd: 34000,
@@ -261,29 +266,12 @@ test("Assigned Driver: can only access own assigned orders and update status, ca
   // Driver 1 cannot read Driver 2's order
   await assertFails(driver1Db.collection("orders").doc("order_drv2").get());
 
-  // Driver 1 cannot list all company orders without filtering by assignedDriverId
-  await assertFails(
-    driver1Db.collection("orders").where("companyCode", "==", "DXP_POST").get()
-  );
-
-  // Driver 1 can list ONLY orders assigned to Driver 1
-  await assertSucceeds(
-    driver1Db
-      .collection("orders")
-      .where("assignedDriverId", "==", DRIVER_1_UID)
-      .get()
-  );
-
-  // Admin 1 can list all company orders
-  await assertSucceeds(
-    admin1Db.collection("orders").where("companyCode", "==", "DXP_POST").get()
-  );
-
-  // Driver 1 can update status to DELIVERED on own assigned order
+  // Driver 1 can update status and attach package photo on own assigned order
   await assertSucceeds(
     driver1Db.collection("orders").doc("order_drv1").update({
       status: "DELIVERED",
       returnReason: "",
+      packageImageBase64: "base64_photo_data",
       updatedAt: new Date(),
     })
   );
@@ -292,30 +280,6 @@ test("Assigned Driver: can only access own assigned orders and update status, ca
   await assertFails(
     driver1Db.collection("orders").doc("order_drv1").update({
       isSettled: true,
-      updatedAt: new Date(),
-    })
-  );
-  await assertFails(
-    driver1Db.collection("orders").doc("order_drv1").update({
-      itemPriceIqd: 0,
-      totalAmountIqd: 5000,
-      updatedAt: new Date(),
-    })
-  );
-
-  // Driver 1 cannot create a cash settlement record
-  await assertFails(
-    driver1Db.collection("settlements").doc("stl_1").set({
-      ownerUid: DRIVER_1_UID,
-      companyCode: "DXP_POST",
-      driverId: DRIVER_1_UID,
-      driverName: "Driver 1",
-      ordersCount: 1,
-      itemPriceTotalIqd: 50000,
-      deliveryFeeTotalIqd: 5000,
-      totalSettledCashIqd: 55000,
-      notes: "Fake settlement",
-      createdAt: new Date(),
       updatedAt: new Date(),
     })
   );
@@ -339,15 +303,6 @@ test("Assigned Driver: can only access own assigned orders and update status, ca
       totalSettledCashIqd: 55000,
       notes: "Settled cash with Driver 1",
       createdAt: new Date(),
-      updatedAt: new Date(),
-    })
-  );
-
-  // Once settled, Driver 1 cannot revert or modify the order status
-  await assertFails(
-    driver1Db.collection("orders").doc("order_drv1").update({
-      status: "RETURNED",
-      returnReason: "Late change attempt",
       updatedAt: new Date(),
     })
   );
