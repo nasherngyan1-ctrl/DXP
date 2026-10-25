@@ -48,12 +48,12 @@ jobs:
             cp .env.example .env
           fi
 
-      - name: Normalize Gradle & Android SDK Versions for Public GitHub Runners
+      - name: Patch Gradle Configuration for Public GitHub Runner Compatibility
         run: |
           python3 - << 'EOF'
           import pathlib, re
 
-          # 1. Normalize gradle/libs.versions.toml to public Google Maven stable artifacts
+          # 1. Replace gradle/libs.versions.toml with 100% public Maven Central & Google Maven versions
           toml_path = pathlib.Path("gradle/libs.versions.toml")
           if toml_path.exists():
               txt = toml_path.read_text(encoding="utf-8")
@@ -64,25 +64,79 @@ jobs:
                   'espressoCore = "3.7.0"': 'espressoCore = "3.6.1"',
                   'kotlin = "2.2.10"': 'kotlin = "2.1.10"',
                   'googleDevtoolsKsp = "2.3.5"': 'googleDevtoolsKsp = "2.1.10-1.0.31"',
+                  'navigationCompose = "2.8.9"': 'navigationCompose = "2.8.8"',
+                  'roomRuntime = "2.7.0"': 'roomRuntime = "2.6.1"',
+                  'roomKtx = "2.7.0"': 'roomKtx = "2.6.1"',
+                  'roomCompiler = "2.7.0"': 'roomCompiler = "2.6.1"',
+                  'kotlinxCoroutinesTest = "1.10.2"': 'kotlinxCoroutinesTest = "1.10.1"',
+                  'kotlinxCoroutinesAndroid = "1.10.2"': 'kotlinxCoroutinesAndroid = "1.10.1"',
+                  'kotlinxCoroutinesCore = "1.10.2"': 'kotlinxCoroutinesCore = "1.10.1"',
                   'robolectric = "4.16.1"': 'robolectric = "4.14.1"',
                   'firebaseBom = "34.17.0"': 'firebaseBom = "33.10.0"',
                   'googleServices = "4.5.0"': 'googleServices = "4.4.2"',
               }
               for old, new in replacements.items():
                   txt = txt.replace(old, new)
+              if "kotlin-android =" not in txt:
+                  txt = txt.replace(
+                      '[plugins]',
+                      '[plugins]\nkotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }'
+                  )
               toml_path.write_text(txt, encoding="utf-8")
 
-          # 2. Normalize compileSdk / targetSdk in app/build.gradle.kts for public Android SDK 35
-          gradle_path = pathlib.Path("app/build.gradle.kts")
-          if gradle_path.exists():
-              gtxt = gradle_path.read_text(encoding="utf-8")
+          # 2. Add kotlin-android plugin to root build.gradle.kts for AGP 8.8.2
+          root_gradle = pathlib.Path("build.gradle.kts")
+          if root_gradle.exists():
+              rtxt = root_gradle.read_text(encoding="utf-8")
+              if "libs.plugins.kotlin.android" not in rtxt:
+                  rtxt = rtxt.replace(
+                      "alias(libs.plugins.android.application) apply false",
+                      "alias(libs.plugins.android.application) apply false\n  alias(libs.plugins.kotlin.android) apply false"
+                  )
+              root_gradle.write_text(rtxt, encoding="utf-8")
+
+          # 3. Patch app/build.gradle.kts:
+          #    - Remove AI Studio container-only MissingGoogleServicesStrategy
+          #    - Add alias(libs.plugins.kotlin.android) and kotlinOptions { jvmTarget = "11" }
+          #    - Set compileSdk = 35 and targetSdk = 35
+          app_gradle = pathlib.Path("app/build.gradle.kts")
+          if app_gradle.exists():
+              gtxt = app_gradle.read_text(encoding="utf-8")
+              gtxt = re.sub(
+                  r'import\s+com\.google\.gms\.googleservices\.GoogleServicesPlugin\.MissingGoogleServicesStrategy\s*\n?',
+                  '',
+                  gtxt
+              )
+              gtxt = re.sub(
+                  r'googleServices\s*\{\s*missingGoogleServicesStrategy\s*=\s*MissingGoogleServicesStrategy\.WARN\s*\}\s*\n?',
+                  '',
+                  gtxt
+              )
+              if "libs.plugins.kotlin.android" not in gtxt:
+                  gtxt = gtxt.replace(
+                      "alias(libs.plugins.android.application)",
+                      "alias(libs.plugins.android.application)\n  alias(libs.plugins.kotlin.android)"
+                  )
               gtxt = re.sub(
                   r'compileSdk\s*\{\s*version\s*=\s*release\(36\)\s*\{\s*minorApiLevel\s*=\s*1\s*\}\s*\}',
                   'compileSdk = 35',
                   gtxt
               )
               gtxt = gtxt.replace('targetSdk = 36', 'targetSdk = 35')
-              gradle_path.write_text(gtxt, encoding="utf-8")
+              if "kotlinOptions" not in gtxt:
+                  gtxt = gtxt.replace(
+                      "targetCompatibility = JavaVersion.VERSION_11\n  }",
+                      'targetCompatibility = JavaVersion.VERSION_11\n  }\n  kotlinOptions {\n    jvmTarget = "11"\n  }'
+                  )
+              app_gradle.write_text(gtxt, encoding="utf-8")
+
+          # 4. Clean container-specific flags from gradle.properties
+          props_path = pathlib.Path("gradle.properties")
+          if props_path.exists():
+              ptxt = props_path.read_text(encoding="utf-8")
+              ptxt = ptxt.replace("kotlin.compiler.execution.strategy=in-process", "")
+              ptxt = ptxt.replace("googleServices.missing.passthrough=true", "")
+              props_path.write_text(ptxt, encoding="utf-8")
           EOF
 
       - name: Setup Gradle 8.13
