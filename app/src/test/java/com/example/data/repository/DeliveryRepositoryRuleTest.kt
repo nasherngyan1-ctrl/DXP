@@ -51,29 +51,31 @@ class DeliveryRepositoryRuleTest : FirestoreEmulatorTestBase() {
     }
 
     @Test
-    fun user_canUnlockUnlimitedAdminRole_withSecretCode_DXPPOST() = runBlocking {
-        val newAdminUid = signInTestUser("new_unlimited_admin@dxppost.com")
+    fun user_canUnlockUnlimitedAdminRole_withCredentials_DXP_and_DXPPOST() = runBlocking {
+        val uniqueEmail = "dxp_admin_${System.currentTimeMillis()}@dxppost.com"
+        val newAdminUid = signInTestUser(uniqueEmail)
         val repo = DeliveryRepository(firestore, auth)
 
-        // First create default DRIVER profile
-        withTimeout(DEFAULT_TIMEOUT_MS) {
+        // First create default DRIVER profile (always starts as DRIVER, never OWNER automatically)
+        val initialProfile = withTimeout(DEFAULT_TIMEOUT_MS) {
             repo.ensureCurrentUserProfile(
                 defaultName = "ئەدمینی نوێ",
-                defaultEmail = "new_unlimited_admin@dxppost.com"
+                defaultEmail = uniqueEmail
             ).getOrThrow()
         }
+        assertEquals(StaffRole.DRIVER.code, initialProfile.role)
 
-        // Wrong code fails
+        // Wrong username or password fails
         val wrongResult = withTimeout(DEFAULT_TIMEOUT_MS) {
-            repo.unlockAdminWithSecretCode("WRONGCODE", "ئەدمینی نوێ")
+            repo.unlockAdminWithCredentials("WRONG", "DXPPOST", "ئەدمینی نوێ")
         }
         assertTrue(wrongResult.isFailure)
 
-        // Correct DXPPOST code unlocks OWNER role in Firestore
+        // Correct DXP + DXPPOST credentials unlock OWNER role in Firestore
         val unlockResult = withTimeout(DEFAULT_TIMEOUT_MS) {
-            repo.unlockAdminWithSecretCode("DXPPOST", "ئەدمینی نوێ", "new_unlimited_admin@dxppost.com")
+            repo.unlockAdminWithCredentials("DXP", "DXPPOST", "ئەدمینی نوێ", uniqueEmail)
         }
-        assertTrue("Unlock with DXPPOST failed: ${unlockResult.exceptionOrNull()}", unlockResult.isSuccess)
+        assertTrue("Unlock with DXP + DXPPOST failed: ${unlockResult.exceptionOrNull()}", unlockResult.isSuccess)
 
         val staffList = withTimeout(FLOW_TIMEOUT_MS) {
             repo.observeCompanyStaff().first { list -> list.any { it.id == newAdminUid && it.role == StaffRole.OWNER.code } }

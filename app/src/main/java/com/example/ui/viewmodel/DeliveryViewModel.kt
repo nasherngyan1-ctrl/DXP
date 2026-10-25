@@ -4,6 +4,7 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.model.ADMIN_SECRET_CODE
+import com.example.data.model.ADMIN_USERNAME
 import com.example.data.model.CashSettlement
 import com.example.data.model.CompanyFinancialKpis
 import com.example.data.model.DeliveryOrder
@@ -18,6 +19,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
@@ -38,25 +40,27 @@ class DeliveryViewModel(
     val currentUserEmail: String = ""
 ) : ViewModel() {
 
-    private val initialRole = if (repository.isKnownAdminEmail(currentUserEmail)) {
-        StaffRole.OWNER
-    } else {
-        StaffRole.DRIVER
-    }
+    // Admin section is ALWAYS LOCKED when opening the app; user starts in DRIVER (مەندووب) mode
+    private val _isAdminUnlocked = MutableStateFlow(false)
+    val isAdminUnlocked: StateFlow<Boolean> = _isAdminUnlocked.asStateFlow()
 
-    private val _actualUserRole = MutableStateFlow(initialRole)
+    private val _actualUserRole = MutableStateFlow(StaffRole.DRIVER)
     val actualUserRole: StateFlow<StaffRole> = _actualUserRole.asStateFlow()
 
-    private val _activeViewRole = MutableStateFlow(initialRole)
+    private val _activeViewRole = MutableStateFlow(StaffRole.DRIVER)
     val activeViewRole: StateFlow<StaffRole> = _activeViewRole.asStateFlow()
 
     private val _isProfileReady = MutableStateFlow(false)
 
     val ordersState: StateFlow<UiState<List<DeliveryOrder>>> = _isProfileReady
         .filter { it }
-        .flatMapLatest { _actualUserRole }
-        .flatMapLatest { role ->
-            if (role == StaffRole.OWNER) {
+        .flatMapLatest {
+            combine(_activeViewRole, _isAdminUnlocked) { role, unlocked ->
+                role == StaffRole.OWNER && unlocked
+            }
+        }
+        .flatMapLatest { isAdminModeActive ->
+            if (isAdminModeActive) {
                 repository.observeCompanyOrders()
             } else {
                 repository.observeDriverOrders(currentUserId)
@@ -75,9 +79,13 @@ class DeliveryViewModel(
 
     val settlementsState: StateFlow<UiState<List<CashSettlement>>> = _isProfileReady
         .filter { it }
-        .flatMapLatest { _actualUserRole }
-        .flatMapLatest { role ->
-            if (role == StaffRole.OWNER) {
+        .flatMapLatest {
+            combine(_activeViewRole, _isAdminUnlocked) { role, unlocked ->
+                role == StaffRole.OWNER && unlocked
+            }
+        }
+        .flatMapLatest { isAdminModeActive ->
+            if (isAdminModeActive) {
                 repository.observeCompanySettlements()
             } else {
                 repository.observeDriverSettlements(currentUserId)
@@ -100,17 +108,7 @@ class DeliveryViewModel(
             repository.observeCompanyStaff()
         }
         .map<List<StaffMember>, UiState<List<StaffMember>>> { staffList ->
-            val currentMember = staffList.firstOrNull { it.id == currentUserId }
-            if (currentMember != null) {
-                val resolvedRole = StaffRole.fromCode(currentMember.role)
-                if (_actualUserRole.value != resolvedRole) {
-                    _actualUserRole.value = resolvedRole
-                    _activeViewRole.value = resolvedRole
-                } else if (!_hasInitializedRoleFromProfile) {
-                    _hasInitializedRoleFromProfile = true
-                    _activeViewRole.value = resolvedRole
-                }
-            }
+            // Note: Do NOT auto-switch to OWNER from staffList; Admin remains locked until DXP + DXPPOST is entered
             UiState.Success(staffList)
         }
         .catch { error ->
@@ -122,8 +120,6 @@ class DeliveryViewModel(
             started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
             initialValue = UiState.Loading
         )
-
-    private var _hasInitializedRoleFromProfile = false
 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
@@ -139,15 +135,14 @@ class DeliveryViewModel(
 
     init {
         viewModelScope.launch {
-            val profileResult = repository.ensureCurrentUserProfile(
-                defaultName = currentUserDisplayName.ifBlank { "بەکارهێنەری DXP POST" },
+            repository.ensureCurrentUserProfile(
+                defaultName = currentUserDisplayName.ifBlank { "مەندووبی DXP POST" },
                 defaultEmail = currentUserEmail
             )
-            profileResult.onSuccess { member ->
-                val resolved = StaffRole.fromCode(member.role)
-                _actualUserRole.value = resolved
-                _activeViewRole.value = resolved
-            }
+            // Always start in DRIVER mode with Admin locked when opening the app
+            _isAdminUnlocked.value = false
+            _actualUserRole.value = StaffRole.DRIVER
+            _activeViewRole.value = StaffRole.DRIVER
             _isProfileReady.value = true
         }
     }
@@ -169,36 +164,44 @@ class DeliveryViewModel(
     }
 
     fun switchActiveRole(role: StaffRole) {
-        if (_actualUserRole.value == StaffRole.OWNER) {
-            _activeViewRole.value = role
-        } else {
+        if (role == StaffRole.DRIVER) {
+            // Switching back to Driver locks the Admin section again so it requires DXP + DXPPOST next time
+            _isAdminUnlocked.value = false
+            _actualUserRole.value = StaffRole.DRIVER
             _activeViewRole.value = StaffRole.DRIVER
+            _actionMessage.value = "بەشی ئەدمین قفڵ درا و گەڕایتەوە بۆ بەشی مەندووب 🔒"
+        } else if (_isAdminUnlocked.value) {
+            _activeViewRole.value = StaffRole.OWNER
         }
     }
 
-    fun unlockAdminWithCode(
-        enteredCode: String,
+    fun unlockAdminWithCredentials(
+        enteredUsername: String,
+        enteredPassword: String,
         onUnlocked: () -> Unit = {},
-        onInvalidCode: (String) -> Unit = {}
+        onInvalidCredentials: (String) -> Unit = {}
     ) {
-        val clean = enteredCode.trim().uppercase()
-        if (clean != ADMIN_SECRET_CODE) {
-            onInvalidCode("کۆدەکە هەڵەیە! تکایە کۆدی تایبەتی ئەدمین بنووسە")
+        val cleanUser = enteredUsername.trim().uppercase()
+        val cleanPass = enteredPassword.trim().uppercase()
+        if (cleanUser != ADMIN_USERNAME || cleanPass != ADMIN_SECRET_CODE) {
+            onInvalidCredentials("یوزەر یان پاسۆرد هەڵەیە! تکایە یوزەری (DXP) و پاسۆردی (DXPPOST) بنووسە")
             return
         }
         viewModelScope.launch {
-            val res = repository.unlockAdminWithSecretCode(
-                secretCode = clean,
+            val res = repository.unlockAdminWithCredentials(
+                username = cleanUser,
+                password = cleanPass,
                 defaultName = currentUserDisplayName.ifBlank { "ئەدمینی DXP POST" },
                 defaultEmail = currentUserEmail
             )
             res.onSuccess {
+                _isAdminUnlocked.value = true
                 _actualUserRole.value = StaffRole.OWNER
                 _activeViewRole.value = StaffRole.OWNER
-                _actionMessage.value = "بەشی ئەدمین بە سەرکەوتوویی چالاک کرا ✓"
+                _actionMessage.value = "قفڵی بەشی ئەدمین کرایەوە بە سەرکەوتوویی ✓"
                 onUnlocked()
             }.onFailure { err ->
-                onInvalidCode(err.localizedMessage ?: "هەڵە لە چالاککردنی ئەدمین")
+                onInvalidCredentials(err.localizedMessage ?: "هەڵە لە کردنەوەی قفڵی ئەدمین")
             }
         }
     }

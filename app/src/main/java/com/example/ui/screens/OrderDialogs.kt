@@ -105,9 +105,10 @@ private fun encodeUriToBase64(context: Context, uri: Uri): String? {
 @Composable
 fun AdminSecretCodeDialog(
     onDismiss: () -> Unit,
-    onUnlockWithCode: (code: String, onError: (String) -> Unit) -> Unit
+    onUnlockWithCredentials: (username: String, password: String, onError: (String) -> Unit) -> Unit
 ) {
-    var codeInput by remember { mutableStateOf("") }
+    var usernameInput by remember { mutableStateOf("") }
+    var passwordInput by remember { mutableStateOf("") }
     var errorMsg by remember { mutableStateOf<String?>(null) }
 
     AlertDialog(
@@ -121,7 +122,7 @@ fun AdminSecretCodeDialog(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "چوونە ناو بەشی ئەدمین",
+                    text = "کردنەوەی قفڵی بەشی ئەدمین",
                     style = MaterialTheme.typography.titleLarge,
                     color = DxpRoyalPlum
                 )
@@ -130,7 +131,7 @@ fun AdminSecretCodeDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    text = "بۆ کردنەوەی دەسەڵاتی تەواوی ئەدمین (بێ سنوور)، کۆدی تایبەتی ئەدمین بنووسە:",
+                    text = "بەشی ئەدمین قفڵکراوە. بۆ چوونەژوورەوەی بەشی ئەدمین، تکایە یوزەر و پاسۆردی تایبەت بنووسە:",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 if (errorMsg != null) {
@@ -142,12 +143,28 @@ fun AdminSecretCodeDialog(
                     )
                 }
                 OutlinedTextField(
-                    value = codeInput,
+                    value = usernameInput,
                     onValueChange = {
-                        codeInput = it
+                        usernameInput = it
                         errorMsg = null
                     },
-                    label = { Text("کۆدی تایبەتی ئەدمین") },
+                    label = { Text("یوزەری ئەدمین (Username)") },
+                    placeholder = { Text("DXP") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.Characters
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("input_admin_username")
+                )
+                OutlinedTextField(
+                    value = passwordInput,
+                    onValueChange = {
+                        passwordInput = it
+                        errorMsg = null
+                    },
+                    label = { Text("پاسۆردی ئەدمین (Password)") },
                     placeholder = { Text("DXPPOST") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(
@@ -162,14 +179,14 @@ fun AdminSecretCodeDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    onUnlockWithCode(codeInput) { err ->
+                    onUnlockWithCredentials(usernameInput, passwordInput) { err ->
                         errorMsg = err
                     }
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = DxpRoyalPlum),
                 modifier = Modifier.testTag("confirm_admin_secret_code_btn")
             ) {
-                Text("چالاککردنی ئەدمین")
+                Text("کردنەوەی بەشی ئەدمین")
             }
         },
         dismissButton = {

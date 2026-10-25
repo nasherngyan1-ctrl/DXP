@@ -8,6 +8,7 @@ import java.text.NumberFormat
 import java.util.Locale
 
 const val COMPANY_CODE_DXP = "DXP_POST"
+const val ADMIN_USERNAME = "DXP"
 const val ADMIN_SECRET_CODE = "DXPPOST"
 
 enum class StaffRole(val code: String, val kurdishTitle: String) {
@@ -46,6 +47,7 @@ data class StaffMember(
     val phone: String = "",
     val email: String = "",
     val role: String = StaffRole.DRIVER.code,
+    val adminUsername: String = "",
     val adminCode: String = "",
     val vehicleInfo: String = "",
     val active: Boolean = true,

@@ -881,23 +881,12 @@ fun ProfileAndSettingsScreen(
                         if (canSwitchRole) {
                             OutlinedButton(
                                 onClick = {
-                                    val next = if (activeRole == StaffRole.OWNER) {
-                                        StaffRole.DRIVER
-                                    } else {
-                                        StaffRole.OWNER
-                                    }
-                                    onSwitchRole(next)
+                                    onSwitchRole(StaffRole.DRIVER)
                                 },
                                 shape = RoundedCornerShape(12.dp),
                                 modifier = Modifier.weight(1f)
                             ) {
-                                Text(
-                                    text = if (activeRole == StaffRole.OWNER) {
-                                        "گۆڕین بۆ دیمەنی مەندووب"
-                                    } else {
-                                        "گۆڕین بۆ دیمەنی ئەدمین"
-                                    }
-                                )
+                                Text("قفڵکردنی ئەدمین (مەندووب)")
                             }
                         } else {
                             OutlinedButton(
@@ -913,7 +902,7 @@ fun ProfileAndSettingsScreen(
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("چالاککردنی ئەدمین بە کۆد")
+                                Text("کردنەوەی قفڵی ئەدمین")
                             }
                         }
                     }

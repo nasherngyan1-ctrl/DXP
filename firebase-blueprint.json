@@ -31,9 +31,13 @@
           "enum": ["OWNER", "DRIVER"],
           "description": "Role within DXP POST: OWNER (Admin, unlimited) or DRIVER (Delivery driver)."
         },
+        "adminUsername": {
+          "type": "string",
+          "description": "Special admin username (DXP) required with adminCode (DXPPOST) to unlock OWNER role."
+        },
         "adminCode": {
           "type": "string",
-          "description": "Optional special admin authorization code (DXPPOST) used to unlock OWNER role."
+          "description": "Special admin password/code (DXPPOST) used with adminUsername (DXP) to unlock OWNER role."
         },
         "vehicleInfo": {
           "type": "string",

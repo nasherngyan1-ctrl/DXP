@@ -3,6 +3,7 @@ package com.example.data.repository
 import android.content.Context
 import com.example.R
 import com.example.data.model.ADMIN_SECRET_CODE
+import com.example.data.model.ADMIN_USERNAME
 import com.example.data.model.COMPANY_CODE_DXP
 import com.example.data.model.CashSettlement
 import com.example.data.model.DeliveryOrder
@@ -37,11 +38,6 @@ class DeliveryRepository(
     private fun requireUserId(): String {
         return auth.currentUser?.uid
             ?: throw IllegalStateException("پێویستە سەرەتا بە هەژماری گووگڵ بچیتە ژوورەوە")
-    }
-
-    fun isKnownAdminEmail(email: String?): Boolean {
-        val clean = email?.trim()?.lowercase() ?: return false
-        return clean in BOOTSTRAPPED_ADMIN_EMAILS
     }
 
     // Admin real-time stream: all company orders
@@ -196,17 +192,12 @@ class DeliveryRepository(
                 }
             }
 
-            val resolvedRole = when {
-                preferredRole != null -> preferredRole
-                isKnownAdminEmail(userEmail) -> StaffRole.OWNER.code
-                else -> StaffRole.DRIVER.code
-            }
+            // Everyone starts as DRIVER (مەندووب) by default; nobody becomes Admin automatically without DXP + DXPPOST
+            val resolvedRole = preferredRole ?: StaffRole.DRIVER.code
 
             val safeName = (matchedPreRegistered?.name?.ifBlank { null } ?: defaultName)
                 .trim()
-                .ifBlank {
-                    if (resolvedRole == StaffRole.OWNER.code) "ئەدمینی DXP POST" else "مەندووبی DXP POST"
-                }
+                .ifBlank { "مەندووبی DXP POST" }
                 .take(80)
             val safePhone = (matchedPreRegistered?.phone?.ifBlank { null } ?: defaultPhone)
                 .trim()
@@ -239,6 +230,7 @@ class DeliveryRepository(
                 phone = safePhone,
                 email = userEmail.take(120),
                 role = resolvedRole,
+                adminUsername = if (resolvedRole == StaffRole.OWNER.code) ADMIN_USERNAME else "",
                 adminCode = if (resolvedRole == StaffRole.OWNER.code) ADMIN_SECRET_CODE else "",
                 vehicleInfo = safeVehicle,
                 active = true
@@ -251,15 +243,17 @@ class DeliveryRepository(
         }
     }
 
-    // Unlock unlimited Admin (OWNER) access using the secret code DXPPOST
-    suspend fun unlockAdminWithSecretCode(
-        secretCode: String,
+    // Unlock unlimited Admin (OWNER) access using Username = DXP and Password = DXPPOST
+    suspend fun unlockAdminWithCredentials(
+        username: String,
+        password: String,
         defaultName: String,
         defaultEmail: String = ""
     ): Result<Unit> = runCatching {
-        val cleanCode = secretCode.trim().uppercase()
-        if (cleanCode != ADMIN_SECRET_CODE) {
-            throw IllegalArgumentException("کۆدی نهێنی ئەدمین هەڵەیە! تکایە کۆدی دروست بنووسە.")
+        val cleanUser = username.trim().uppercase()
+        val cleanPass = password.trim().uppercase()
+        if (cleanUser != ADMIN_USERNAME || cleanPass != ADMIN_SECRET_CODE) {
+            throw IllegalArgumentException("یوزەر یان پاسۆردی ئەدمین هەڵەیە! تکایە یوزەر و پاسۆردی دروست بنووسە.")
         }
         val uid = requireUserId()
         val docRef = db.collection("staff").document(uid)

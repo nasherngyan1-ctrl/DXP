@@ -130,19 +130,21 @@ test("Role security & DXPPOST Admin Code: Driver cannot become OWNER without DXP
     })
   );
 
-  // Driver cannot escalate own role to OWNER with wrong code
+  // Driver cannot escalate own role to OWNER with wrong username or password
   await assertFails(
     newDriverDb.collection("staff").doc(DRIVER_2_UID).update({
       role: "OWNER",
-      adminCode: "WRONGCODE",
+      adminUsername: "WRONGUSER",
+      adminCode: "DXPPOST",
       updatedAt: new Date(),
     })
   );
 
-  // User CAN unlock OWNER role using the secret code DXPPOST
+  // User CAN unlock OWNER role using Username = DXP and Password = DXPPOST
   await assertSucceeds(
     newDriverDb.collection("staff").doc(DRIVER_2_UID).update({
       role: "OWNER",
+      adminUsername: "DXP",
       adminCode: "DXPPOST",
       updatedAt: new Date(),
     })

@@ -156,6 +156,7 @@ fun DxpMainWorkspace(
     val settlementsState by viewModel.settlementsState.collectAsStateWithLifecycle()
     val activeRole by viewModel.activeViewRole.collectAsStateWithLifecycle()
     val actualRole by viewModel.actualUserRole.collectAsStateWithLifecycle()
+    val isAdminUnlocked by viewModel.isAdminUnlocked.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val selectedStatus by viewModel.selectedStatusFilter.collectAsStateWithLifecycle()
     val selectedDriverFilterId by viewModel.selectedDriverFilterId.collectAsStateWithLifecycle()
@@ -203,7 +204,7 @@ fun DxpMainWorkspace(
             Column(modifier = Modifier.fillMaxWidth()) {
                 DxpTopHeader(
                     activeRole = activeRole,
-                    canSwitchRole = actualRole == StaffRole.OWNER,
+                    canSwitchRole = isAdminUnlocked,
                     onSwitchRole = { viewModel.switchActiveRole(it) },
                     onRequestAdminCode = { showAdminSecretCodeDialog = true },
                     userName = currentUserDisplayName
@@ -328,7 +329,7 @@ fun DxpMainWorkspace(
                             currentUserEmail = currentUserEmail,
                             staffList = staffList,
                             activeRole = activeRole,
-                            canSwitchRole = actualRole == StaffRole.OWNER,
+                            canSwitchRole = isAdminUnlocked,
                             onSwitchRole = { viewModel.switchActiveRole(it) },
                             onRequestAdminCode = { showAdminSecretCodeDialog = true },
                             onEditOwnProfile = { member -> staffMemberToEdit = member },
@@ -351,11 +352,12 @@ fun DxpMainWorkspace(
     if (showAdminSecretCodeDialog) {
         AdminSecretCodeDialog(
             onDismiss = { showAdminSecretCodeDialog = false },
-            onUnlockWithCode = { code, onError ->
-                viewModel.unlockAdminWithCode(
-                    enteredCode = code,
+            onUnlockWithCredentials = { username, password, onError ->
+                viewModel.unlockAdminWithCredentials(
+                    enteredUsername = username,
+                    enteredPassword = password,
                     onUnlocked = { showAdminSecretCodeDialog = false },
-                    onInvalidCode = { err -> onError(err) }
+                    onInvalidCredentials = { err -> onError(err) }
                 )
             }
         )
